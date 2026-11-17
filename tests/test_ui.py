@@ -49,6 +49,35 @@ class UiSmokeTests(HomeTestCase):
         finally:
             w.root.destroy()
 
+    def test_views_and_update_footer(self):
+        from subusage import update
+        from subusage.providers.command import demo_providers
+        from subusage.ui import Widget
+        w = Widget(demo_providers(), {"view": "condensed"}, demo=True)
+        try:
+            for p in w.providers:
+                p.run_fetch()
+            heights = {}
+            for view in ("full", "condensed", "compact"):
+                w.cfg["view"] = view
+                w.render(force=True)
+                self.pump(w.root)
+                heights[view] = w.root.winfo_reqheight()
+            self.assertGreater(heights["full"], heights["condensed"])
+            self.assertGreater(heights["condensed"], heights["compact"])
+            w.update_info = update.UpdateInfo("2.1.0", "9.0.0", "v9.0.0", "", "https://x", checked_at=__import__("time").time())
+            w.render(force=True)
+            texts = [c.cget("text") for c in w.body.winfo_children()[-1].winfo_children()]
+            self.assertIn("⬆ Update 9.0.0", texts)
+            w.open_settings(about=True)
+            self.pump(w.root)
+            self.assertIn("9.0.0", w._settings.upd_status.cget("text"))
+            w._settings.v_view.set("condensed")
+            w._settings.save()
+            self.assertEqual(w.cfg["view"], "condensed")
+        finally:
+            w.root.destroy()
+
     def test_demo_compact(self):
         from subusage.providers.command import demo_providers
         from subusage.ui import Widget

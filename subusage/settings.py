@@ -17,7 +17,7 @@ from .core import (IS_LINUX, IS_MAC, HttpError, Provider, Snapshot, bg, config_p
                    open_path)
 from .providers import CATALOG, PROVIDERS
 from .providers.command import CUSTOM_HELP
-from .ui import FONT, THEME, fsize
+from .ui import FONT, THEME, VIEWS, fsize, view_of
 
 AUTH_LABEL = {"auto": "Uses your existing login", "key": "Paste an API key", "command": "Your own command"}
 
@@ -163,9 +163,21 @@ class SettingsDialog:
         self.v_opacity = self._num(disp, "Opacity %", int(float(self.cfg.get("opacity", 0.95)) * 100), 3)
         flags = tk.Frame(outer, bg=THEME["bg"])
         flags.pack(fill="x", pady=(8, 0))
+        lbl(flags, "View", THEME["muted"]).pack(side="left", padx=(0, 6))
+        self.v_view = tk.StringVar(value=view_of(self.cfg))
+        names = dict(VIEWS)
+        mb = tk.Menubutton(flags, text=names[self.v_view.get()], bg=THEME["button"], fg=THEME["fg"],
+                           activebackground=THEME["button_hover"], activeforeground=THEME["fg"], relief="flat",
+                           font=(FONT, fsize(9)), padx=8, pady=1)
+        vm = tk.Menu(mb, tearoff=0)
+        for key, label in VIEWS:
+            vm.add_command(label=label, command=lambda k=key, l=label: (self.v_view.set(k), mb.configure(text=l)))
+        mb.configure(menu=vm)
+        mb.pack(side="left", padx=(0, 14))
         self.v_top = toggle(flags, "Always on top", self.cfg.get("always_on_top", True))
-        self.v_compact = toggle(flags, "Compact", self.cfg.get("compact", False))
         self.v_hide = toggle(flags, "Hide subscriptions with no login", self.cfg.get("hide_unconfigured", True))
+
+        self._about(outer)
 
         bar = tk.Frame(outer, bg=THEME["bg"])
         bar.pack(fill="x", pady=(16, 0))
@@ -204,6 +216,75 @@ class SettingsDialog:
 
     def _bg(self, fn, done):
         bg(fn, lambda r: self.alive() and done(r), self.top.after)
+
+    # ----- about & updates
+    def _about(self, outer) -> None:
+        from . import update
+        lbl(outer, "ABOUT & UPDATES", THEME["muted"], 8, True).pack(anchor="w", pady=(14, 6))
+        box = tk.Frame(outer, bg=THEME["panel"], padx=10, pady=8)
+        box.pack(fill="x")
+        top = tk.Frame(box, bg=THEME["panel"])
+        top.pack(fill="x")
+        kind = {"git": "git checkout", "pip": "pip/pipx install", "source": "downloaded folder"}[update.install_kind()]
+        lbl(top, f"{APP} {update.version_string()}", THEME["fg"], 9, True).pack(side="left")
+        lbl(top, f"  ·  {kind}", THEME["muted"], 8).pack(side="left")
+        button(top, "Repo", lambda: webbrowser.open(update.REPO_URL), subtle=True, small=True).pack(side="right")
+        self.btn_update = button(top, "Update now", self._apply_update, primary=True, small=True)
+        button(top, "Check for updates", self._check_update, small=True).pack(side="right", padx=(0, 6))
+        line = tk.Frame(box, bg=THEME["panel"])
+        line.pack(fill="x", pady=(6, 0))
+        self.v_updates = toggle(line, "Check automatically (daily)", self.cfg.get("check_updates", True), bg=THEME["panel"])
+        self.upd_status = lbl(box, "", THEME["muted"], 8, wraplength=600)
+        self.upd_status.pack(anchor="w", pady=(4, 0))
+        self._show_update_state()
+
+    def _show_update_state(self) -> None:
+        info, err = self.w.update_info, self.w.update_error
+        self.btn_update.pack_forget()
+        if info and info.available:
+            self.upd_status.configure(text=f"Version {info.latest} is available (you have {info.current}). "
+                                           f"Notes: {info.url}", fg=THEME["warn"])
+            self.btn_update.pack(side="right", padx=(0, 6))
+        elif info:
+            ago = int((time.time() - info.checked_at) // 60)
+            self.upd_status.configure(text=f"Up to date (latest {info.latest}, checked {ago} min ago).", fg=THEME["ok"])
+        elif err:
+            self.upd_status.configure(text=f"Couldn't check: {err}", fg=THEME["err"])
+        else:
+            self.upd_status.configure(text="Not checked yet.", fg=THEME["muted"])
+
+    def _check_update(self) -> None:
+        self.upd_status.configure(text="Checking GitHub…", fg=THEME["muted"])
+        self.w.check_updates(on_done=lambda: self.alive() and self._show_update_state())
+
+    def show_about(self) -> None:
+        self.top.lift()
+        info = self.w.update_info
+        if info is None or time.time() - info.checked_at > 3600:
+            self._check_update()
+        else:
+            self._show_update_state()
+
+    def _apply_update(self) -> None:
+        from . import update
+        info = self.w.update_info
+        if not info:
+            return
+        self.upd_status.configure(text=f"Installing {info.latest}…", fg=THEME["warn"])
+
+        def done(res):
+            if isinstance(res, Exception):
+                self.upd_status.configure(text=f"✗ Update failed: {res}", fg=THEME["err"])
+                return
+            self.upd_status.configure(text=f"✓ {res}. Restarting…", fg=THEME["ok"])
+
+            def restart():
+                try:
+                    update.restart()
+                finally:
+                    self.w.quit()
+            self.top.after(900, restart)
+        self._bg(lambda: update.apply(info), done)
 
     # ----- provider rows
     def _provider_row(self, pc: dict[str, Any]) -> None:
@@ -442,7 +523,9 @@ class SettingsDialog:
         cfg["width"] = int(num(self.v_width, 300, 220, 700))
         cfg["opacity"] = round(num(self.v_opacity, 95, 30, 100) / 100, 2)
         cfg["always_on_top"] = bool(self.v_top.get())
-        cfg["compact"] = bool(self.v_compact.get())
+        cfg["view"] = self.v_view.get()
+        cfg.pop("compact", None)
+        cfg["check_updates"] = bool(self.v_updates.get())
         cfg["hide_unconfigured"] = bool(self.v_hide.get())
         self.close()
         self.w.apply_config(cfg)

@@ -1,8 +1,10 @@
 """The floating widget (tkinter)."""
 from __future__ import annotations
 
+import threading
 import time
 import tkinter as tk
+import tkinter.font as tkfont
 import webbrowser
 from typing import Any, Optional
 
@@ -32,6 +34,16 @@ def context_events() -> tuple[str, ...]:
     return ("<Button-2>", "<Control-Button-1>") if IS_MAC else ("<Button-3>",)
 
 
+VIEWS = (("full", "Full"), ("condensed", "Condensed"), ("compact", "Compact"))
+
+
+def view_of(cfg: dict[str, Any]) -> str:
+    v = cfg.get("view")
+    if v in dict(VIEWS):
+        return v
+    return "compact" if cfg.get("compact") else "full"  # pre-2.1 configs
+
+
 class Widget:
     def __init__(self, providers: list[Provider], cfg: dict[str, Any], demo: bool = False):
         self.providers, self.cfg, self.demo = providers, cfg, demo
@@ -51,6 +63,8 @@ class Widget:
         self._drag = (0, 0)
         self._last_sig: Any = None
         self._settings = None
+        self.update_info = None
+        self.update_error = ""
         self._build_menu()
         for ev in context_events():
             self.root.bind(ev, self._popup)
@@ -58,6 +72,8 @@ class Widget:
         self._place()
         self.scheduler.start()
         self.root.after(1000, self._tick)
+        if not demo:
+            self.root.after(15_000, self._auto_check)
 
     # ----- window plumbing
     def _place(self) -> None:
@@ -97,9 +113,12 @@ class Widget:
         m.add_command(label="Add subscription…", command=lambda: self.open_settings(picker=True))
         m.add_separator()
         self.v_top = tk.BooleanVar(value=bool(self.cfg.get("always_on_top", True)))
-        self.v_compact = tk.BooleanVar(value=bool(self.cfg.get("compact", False)))
+        self.v_view = tk.StringVar(value=view_of(self.cfg))
+        views = tk.Menu(m, tearoff=0)
+        for key, label in VIEWS:
+            views.add_radiobutton(label=label, value=key, variable=self.v_view, command=self._set_view)
+        m.add_cascade(label="View", menu=views)
         m.add_checkbutton(label="Always on top", variable=self.v_top, command=self._toggle_top)
-        m.add_checkbutton(label="Compact", variable=self.v_compact, command=self._toggle_compact)
         op = tk.Menu(m, tearoff=0)
         for v in (1.0, 0.95, 0.85, 0.75, 0.6):
             op.add_command(label=f"{int(v * 100)}%", command=lambda v=v: self._set_opacity(v))
@@ -113,6 +132,7 @@ class Widget:
         m.add_separator()
         m.add_command(label="Open config file", command=lambda: open_path(config_path()))
         m.add_command(label="Open log", command=lambda: open_path(log_path()))
+        m.add_command(label="About & updates…", command=lambda: self.open_settings(about=True))
         m.add_separator()
         m.add_command(label="Quit", command=self.quit)
         self.menu = m
@@ -128,8 +148,9 @@ class Widget:
         self.root.attributes("-topmost", self.cfg["always_on_top"])
         save_config(self.cfg)
 
-    def _toggle_compact(self) -> None:
-        self.cfg["compact"] = self.v_compact.get()
+    def _set_view(self) -> None:
+        self.cfg["view"] = self.v_view.get()
+        self.cfg.pop("compact", None)
         save_config(self.cfg)
         self.render(force=True)
 
@@ -153,7 +174,7 @@ class Widget:
         self.root.destroy()
 
     # ----- settings
-    def open_settings(self, picker: bool = False) -> None:
+    def open_settings(self, picker: bool = False, about: bool = False) -> None:
         from .settings import SettingsDialog
         if self._settings and self._settings.alive():
             self._settings.top.lift()
@@ -162,6 +183,8 @@ class Widget:
             self._settings = SettingsDialog(self)
         if picker:
             self._settings.open_picker()
+        if about:
+            self._settings.show_about()
 
     def apply_config(self, cfg: dict[str, Any]) -> None:
         cfg["x"], cfg["y"] = self.root.winfo_x(), self.root.winfo_y()
@@ -181,13 +204,35 @@ class Widget:
         self._build_menu()
         self.render(force=True)
 
+    # ----- updates
+    def _auto_check(self) -> None:
+        if self.cfg.get("check_updates", True):
+            self.check_updates()
+        self.root.after(24 * 3600 * 1000, self._auto_check)
+
+    def check_updates(self, on_done=None) -> None:
+        from . import update
+
+        def work():
+            try:
+                self.update_info, self.update_error = update.check(), ""
+            except Exception as e:  # offline, rate limited...
+                self.update_error = str(e)
+                from .core import log
+                log(f"update check failed: {e}")
+            self._last_sig = None  # re-render footer
+            if on_done:
+                self.root.after(0, on_done)
+        threading.Thread(target=work, daemon=True).start()
+
     # ----- rendering
     def _tick(self) -> None:
         self.render()
         self.root.after(1000, self._tick)
 
     def _signature(self):
-        parts: list[Any] = [int(time.time() // 60), self.cfg.get("compact"), self.width]
+        parts: list[Any] = [int(time.time() // 60), view_of(self.cfg), self.width,
+                            bool(self.update_info and self.update_info.available)]
         for p in self.providers:
             with p.lock:
                 s = p.snapshot
@@ -205,16 +250,29 @@ class Widget:
         if not visible:
             self._label(self.body, "No subscriptions found yet.\nClick ⚙ to add one or point the widget\n"
                         "at your Claude Code, Codex, Copilot… login.", THEME["muted"], 9).pack(anchor="w")
+        view = view_of(self.cfg)
+        self.body.configure(pady=10 if view == "full" else 7, padx=12 if view == "full" else 10)
+        draw = {"full": self._render_full, "condensed": self._render_condensed, "compact": self._render_compact}[view]
         for i, p in enumerate(visible):
             if i:
-                tk.Frame(self.body, bg=THEME["track"], height=1).pack(fill="x", pady=(8, 8))
-            (self._render_compact if self.cfg.get("compact") else self._render_full)(p)
+                if view == "full":
+                    tk.Frame(self.body, bg=THEME["track"], height=1).pack(fill="x", pady=(8, 8))
+                else:
+                    tk.Frame(self.body, bg=THEME["bg"], height=4 if view == "compact" else 7).pack(fill="x")
+            draw(p)
         self._footer()
         self._bind_drag(self.body)
 
     def _footer(self) -> None:
         foot = tk.Frame(self.body, bg=THEME["bg"])
         foot.pack(fill="x", pady=(6, 0))
+        info = self.update_info
+        if info and info.available:
+            up = tk.Label(foot, text=f"⬆ Update {info.latest}", fg=THEME["primary_hover"], bg=THEME["bg"],
+                          font=(FONT, fsize(8), "bold"), cursor="hand2")
+            up._nodrag = True  # type: ignore[attr-defined]
+            up.pack(side="left")
+            up.bind("<Button-1>", lambda _e: self.open_settings(about=True))
         for text, cmd in (("⚙", self.open_settings), ("⟳", self.scheduler.refresh_all)):
             b = tk.Label(foot, text=text, fg=THEME["muted"], bg=THEME["bg"], font=(ICON_FONT, fsize(11)),
                          cursor="hand2")
@@ -292,6 +350,58 @@ class Widget:
             self._label(self.body, n, THEME["muted"], 8).pack(anchor="w", pady=(3, 0))
         if snap.error:
             self._label(self.body, f"⚠ {snap.error}", THEME["err"], 8, wraplength=bar_w).pack(anchor="w", pady=(4, 0))
+
+    def _render_condensed(self, p: Provider) -> None:
+        """One tight row per window: label · mini bar · % · reset."""
+        with p.lock:
+            snap = p.snapshot
+        head = tk.Frame(self.body, bg=THEME["bg"])
+        head.pack(fill="x")
+        dot = tk.Canvas(head, width=7, height=7, bg=THEME["bg"], highlightthickness=0)
+        dot.create_oval(0, 0, 7, 7, fill=p.accent, width=0)
+        dot.pack(side="left", padx=(0, 5))
+        self._label(head, p.name, THEME["fg"], 9, True).pack(side="left")
+        if snap.plan:
+            self._label(head, f" {snap.plan}", THEME["muted"], 8).pack(side="left")
+        if snap.error:
+            self._label(head, "⚠", THEME["err"], 9).pack(side="right")
+        head.bind("<Double-Button-1>", lambda _e: p.usage_url and webbrowser.open(p.usage_url))
+
+        font_t, bold_t = (FONT, fsize(8)), (FONT, fsize(8), "bold")
+        font = tkfont.Font(root=self.root, font=font_t)   # for measuring only
+        bold = tkfont.Font(root=self.root, font=bold_t)
+        W = self.width - 20
+        row_h = max(14, font.metrics("linespace") + 2)
+        label_w = int(W * 0.36)
+        pct_w = bold.measure("100%") + 6
+        reset_w = font.measure("↻ 22h 59m") + 2
+        bar_x0, bar_x1 = label_w, W - pct_w - reset_w - 6
+        now = time.time()
+        for w in snap.windows:
+            c = tk.Canvas(self.body, width=W, height=row_h, bg=THEME["bg"], highlightthickness=0)
+            c.pack(anchor="w")
+            text = w.label
+            while text and font.measure(text) > label_w - 6:
+                text = text[:-2] + "…" if len(text) > 2 else ""
+            mid = row_h // 2
+            c.create_text(0, mid, text=text, anchor="w", fill=THEME["muted"], font=font_t)
+            c.create_rectangle(bar_x0, mid - 2, bar_x1, mid + 2, fill=THEME["track"], width=0)
+            color = self._color(w.used_pct)
+            if w.used_pct is not None:
+                c.create_rectangle(bar_x0, mid - 2, bar_x0 + (bar_x1 - bar_x0) * max(0.0, min(1.0, w.used_pct / 100)),
+                                   mid + 2, fill=color, width=0)
+                c.create_text(bar_x1 + 6 + pct_w - 4, mid, text=f"{w.used_pct:.0f}%", anchor="e", fill=color, font=bold_t)
+            if w.resets_at and w.length_s:
+                elapsed = 1 - (w.resets_at - now) / w.length_s
+                if 0 < elapsed < 1:
+                    x = bar_x0 + int((bar_x1 - bar_x0) * elapsed)
+                    c.create_rectangle(x, mid - 3, x + 1, mid + 3, fill=THEME["pace"], width=0)
+            if w.resets_at:
+                left = w.resets_at - now
+                c.create_text(W, mid, text=f"↻ {fmt_delta(left)}" if left > 60 else "now", anchor="e",
+                              fill=THEME["muted"], font=font_t)
+        if snap.error:
+            self._label(self.body, snap.error, THEME["err"], 7, wraplength=W).pack(anchor="w")
 
     def _render_compact(self, p: Provider) -> None:
         with p.lock:

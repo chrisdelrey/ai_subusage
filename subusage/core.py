@@ -507,7 +507,8 @@ DEFAULT_PROVIDERS = ["claude", "codex", "copilot", "gemini", "cursor", "jetbrain
 DEFAULT_CONFIG: dict[str, Any] = {
     "providers": [],          # filled from DEFAULT_PROVIDERS on first run
     "always_on_top": True,
-    "compact": False,
+    "view": "full",             # full | condensed | compact
+    "check_updates": True,
     "opacity": 0.95,
     "width": 300,
     "warn_pct": 70,

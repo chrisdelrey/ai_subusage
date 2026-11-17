@@ -20,6 +20,7 @@ Runs on **Windows, macOS and Ubuntu/Linux**. Pure Python standard library, no de
 - [Using the widget](#using-the-widget)
 - [Adding and configuring subscriptions](#adding-and-configuring-subscriptions)
 - [Start at login](#start-at-login)
+- [Updating](#updating)
 - [Platform notes](#platform-notes)
 - [Privacy and security](#privacy-and-security)
 - [Command line](#command-line)
@@ -37,7 +38,8 @@ Runs on **Windows, macOS and Ubuntu/Linux**. Pure Python standard library, no de
 - **Add / remove from a catalog:** pick from the built-in subscriptions, paste an API key for key-based plans, or plug in anything else with a custom command.
 - **Settings window:** a login-file field for each subscription with **Find…** (also searches WSL on Windows), **Browse…** and **Test**, plus one-click **Sign in with GitHub** for Copilot.
 - **Gentle on vendors:** polls every 5 minutes by default, backs off on rate limits (honoring `Retry-After`), and keeps showing the last good data while it waits.
-- **Compact mode, opacity and always-on-top**, plus start at login on all three OSes.
+- **Three views:** Full, Condensed (one tight row per limit) and Compact (one line per subscription). Plus opacity, always-on-top, and start at login on all three OSes.
+- **Built-in updates:** shows the version and build, checks GitHub daily, and updates in one click.
 
 ## Supported subscriptions
 
@@ -102,7 +104,9 @@ On Windows, use `python` instead of `python3`. You can also double-click **`subu
 | Settings | Click **⚙** (bottom right) |
 | Refresh now | Click **⟳**, or use the menu. There's a 60-second floor so you can't trip vendor rate limits. |
 | Open a vendor's usage page | Double-click the subscription's name |
-| Compact view | Menu → Compact: one line per subscription |
+| Change density | Menu → **View**: **Full** (bars + details), **Condensed** (one row per limit with a mini bar), **Compact** (one line per subscription) |
+
+<p align="center"><img src="docs/views.png" alt="Full, Condensed and Compact views" width="720"></p>
 
 Subscriptions without a login on this machine are hidden. To list them anyway, turn off "Hide subscriptions with no login" in Settings.
 
@@ -161,6 +165,20 @@ Right-click the widget → **Start at login**. What that does on each OS:
 
 It points at wherever SubUsage is installed. If you move the folder, untick and re-tick it. Only one copy of the widget runs at a time.
 
+## Updating
+
+The version and build show in **⚙ Settings → About & updates**. Build means the commit for a git checkout, or the release tag after an in-app update. SubUsage checks GitHub once a day, and you can turn that off. When a new release is out, a small **⬆ Update x.y.z** link appears in the widget's footer. Click it, then **Update now**. The widget updates itself the right way for how you installed it, then restarts:
+
+| Installed with | Update does |
+|---|---|
+| `git clone` | `git pull --ff-only` (refuses if you have local changes) |
+| pip / pipx | `pip install --upgrade git+https://github.com/chrisdelrey/ai_subusage.git@<tag>` |
+| Downloaded zip | Downloads the release zip from GitHub and replaces the program files. Your settings live elsewhere and are kept. |
+
+From a terminal: `python3 -m subusage --check-update` or `python3 -m subusage --update`.
+
+Updates are only installed when you click **Update now**. The daily check just looks at the GitHub Releases API (or the version on `main` if there are no releases yet).
+
 ## Platform notes
 
 **Windows**
@@ -192,7 +210,9 @@ python3 -m subusage --once       fetch every subscription once, print, exit
 python3 -m subusage --once --json    same, as JSON (handy for scripts and bug reports)
 python3 -m subusage --demo       sample data, no logins
 python3 -m subusage --settings   start with the Settings window open
-python3 -m subusage --version
+python3 -m subusage --version        version, build and install type
+python3 -m subusage --check-update   is a newer version on GitHub?
+python3 -m subusage --update         install it (then restart the widget)
 ```
 
 ## Troubleshooting
@@ -206,6 +226,7 @@ python3 -m subusage --version
 | Cursor: "token is encrypted" | Paste a cursor.com session token (see [macOS notes](#platform-notes)). |
 | JetBrains numbers look old | The IDE only saves its quota file now and then. Open the IDE to update it. |
 | `tkinter` missing | Ubuntu: `sudo apt install python3-tk`. Homebrew: `brew install python-tk`. |
+| Update failed: "local changes" | Your git checkout has edits. Commit or stash them, or run `git pull` yourself. |
 | Nothing happens on launch | Another copy is already running (one copy per user). Check the log: menu → Open log. |
 
 Logs are in the same folder as the config file (`widget.log`).

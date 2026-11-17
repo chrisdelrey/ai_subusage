@@ -26,6 +26,7 @@ subusage/
   core.py              data model, Provider base class, http_json, config, scheduler, start-at-login
   ui.py                the widget (tkinter)
   settings.py          Settings window + "Add subscription" picker (generated from provider fields)
+  update.py            version/build info, update check (GitHub Releases) and self-update
   providers/
     __init__.py        registry (PROVIDERS) + catalog of not-yet-built-in subscriptions (CATALOG)
     claude.py, codex.py, copilot.py, gemini.py, cursor.py, jetbrains.py, nous.py
@@ -128,6 +129,14 @@ python3 -m subusage --settings        # Add it, then Test from its row
 - [ ] Tested against a real account (say which plan/OS in the PR)
 - [ ] PROVIDERS.md + README table updated; `CATALOG` updated if applicable
 - [ ] No tokens, emails or account IDs in tests, screenshots or logs
+
+## Releasing (maintainers)
+
+1. Bump `__version__` in `subusage/__init__.py` (semver: provider fixes = patch, new providers/features = minor).
+2. Merge to `main`.
+3. Tag and push: `git tag v2.1.0 && git push origin v2.1.0`.
+
+The `release` workflow checks that the tag matches `__version__`, runs the tests, and publishes a GitHub Release with generated notes. Running widgets pick it up on their next daily check.
 
 ## Reporting a broken provider
 
