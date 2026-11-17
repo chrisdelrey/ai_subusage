@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import time
 
-from ..core import (Field, HttpError, Provider, ProviderError, Snapshot, UsageWindow, fnum, http_json,
+from ..core import (AuthExpired, Field, HttpError, Provider, ProviderError, Snapshot, UsageWindow, fnum, http_json,
                     jwt_claims, parse_time, read_json_file, title_case)
 
 
@@ -40,7 +40,7 @@ class NousProvider(Provider):
         except HttpError as e:
             exp = fnum(jwt_claims(token).get("exp"))
             if e.status == 401 and exp and exp < time.time():
-                raise ProviderError("Token expired; run any `hermes` command (or open Hermes) to refresh it") from None
+                raise AuthExpired("Login expired; it refreshes the next time you use Hermes") from None
             raise
         if isinstance(j.get("error"), str):
             raise ProviderError(f"Portal: {j['error']}")

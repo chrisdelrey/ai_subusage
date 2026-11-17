@@ -17,7 +17,7 @@ from .core import (IS_LINUX, IS_MAC, HttpError, Provider, Snapshot, bg, config_p
                    open_path)
 from .providers import CATALOG, PROVIDERS
 from .providers.command import CUSTOM_HELP
-from .ui import FONT, SORTS, THEME, VIEWS, fsize, view_of
+from .ui import EXPIRED, FONT, SORTS, THEME, VIEWS, fsize, view_of
 
 AUTH_LABEL = {"auto": "Uses your existing login", "key": "Paste an API key", "command": "Your own command"}
 
@@ -187,6 +187,11 @@ class SettingsDialog:
         flags2.pack(fill="x", pady=(8, 0))
         self.v_hide = toggle(flags2, "Hide subscriptions with no login", self.cfg.get("hide_unconfigured", True))
         self.v_proj = toggle(flags2, "Warn when a limit will run out before it resets", self.cfg.get("projections", True))
+        flags4 = tk.Frame(outer, bg=THEME["bg"])
+        flags4.pack(fill="x", pady=(8, 0))
+        lbl(flags4, "Expired logins", THEME["muted"]).pack(side="left", padx=(0, 6))
+        self.v_expired = choice(flags4, EXPIRED, self.cfg.get("expired_display", "hide"))
+        lbl(flags4, "e.g. Hermes when you haven't used it lately; it comes back once you do", THEME["muted"], 7).pack(side="left")
         flags3 = tk.Frame(outer, bg=THEME["bg"])
         flags3.pack(fill="x", pady=(8, 0))
         self.v_hist = toggle(flags3, "Keep usage history on this computer (30 days)", self.cfg.get("history", True))
@@ -564,6 +569,7 @@ class SettingsDialog:
         cfg["always_on_top"] = bool(self.v_top.get())
         cfg["view"] = self.v_view.get()
         cfg["sort"] = self.v_sort.get()
+        cfg["expired_display"] = self.v_expired.get()
         cfg["projections"] = bool(self.v_proj.get())
         cfg["history"] = bool(self.v_hist.get())
         cfg.pop("compact", None)

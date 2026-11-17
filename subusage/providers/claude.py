@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import time
 
-from ..core import (IS_MAC, Field, HttpError, NotConfigured, Provider, ProviderError, Snapshot, UsageWindow,
+from ..core import (IS_MAC, AuthExpired, Field, HttpError, NotConfigured, Provider, ProviderError, Snapshot, UsageWindow,
                     fnum, http_json, parse_time, read_json_file, run_cmd, title_case)
 
 
@@ -37,13 +37,26 @@ class ClaudeProvider(Provider):
         "seven_day_oauth_apps": ("Weekly · Apps", 7 * 86400),
     }
 
+    def _keychain(self) -> str:
+        return run_cmd(["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"], timeout=20) or ""
+
+    def watch_signature(self):
+        path = self.login_path()
+        if path and (path.exists() or self.setting(self.path_key) or not IS_MAC):
+            return super().watch_signature()
+        try:  # macOS Keychain: fingerprint token + expiry locally, no network
+            oauth = json.loads(self._keychain() or "{}").get("claudeAiOauth") or {}
+        except ValueError:
+            return None
+        return (str(oauth.get("accessToken", ""))[-12:], oauth.get("expiresAt")) if oauth else None
+
     def _credentials(self) -> dict:
         path = self.login_path()
         custom = bool(self.setting(self.path_key))
         if path and (path.exists() or custom or not IS_MAC):
             return read_json_file(path, self.login_what)
         # macOS: Claude Code keeps the login in the Keychain.
-        out = run_cmd(["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"], timeout=20)
+        out = self._keychain()
         if out:
             try:
                 return json.loads(out)
@@ -61,7 +74,7 @@ class ClaudeProvider(Provider):
             j = http_json(self.URL, {"Authorization": f"Bearer {token}", "anthropic-beta": "oauth-2025-04-20"})
         except HttpError as e:
             if e.status == 401 and expires and expires < time.time():
-                raise ProviderError("Token expired; open Claude Code once to refresh it") from None
+                raise AuthExpired("Login expired; it refreshes the next time you use Claude Code") from None
             raise
         snap = Snapshot(plan=title_case(oauth.get("subscriptionType")))
         order = list(self.LABELS)

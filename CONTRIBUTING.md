@@ -87,8 +87,9 @@ Key-based providers set `auth = "key"`, declare `Field("api_key", "API key", "se
 | Raise | When | Widget shows |
 |---|---|---|
 | `NotConfigured` | No login/key on this machine | Hidden (unless the user turns hiding off) |
+| `AuthExpired("…")` | The saved login exists but is expired/rejected | Parked: hidden, no network calls until `watch_signature()` changes (default: the login file's mtime). Override `watch_paths()`/`watch_signature()` if the login lives elsewhere; set `parks_on_auth = False` for API-key providers. |
 | `ProviderError("…")` | Something the user can fix: expired token, no subscription | Warning line, keeps last good data |
-| `HttpError` (from `http_json`) | Let it propagate | 429 → backoff with `Retry-After`; 401/403 → "sign in again" |
+| `HttpError` (from `http_json`) | Let it propagate | 429 → backoff with `Retry-After`; 401/403 → parked (or an error for key providers) |
 
 Any other exception is caught and logged, so one provider can never crash the widget.
 

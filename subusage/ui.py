@@ -36,6 +36,7 @@ def context_events() -> tuple[str, ...]:
 
 VIEWS = (("full", "Full"), ("condensed", "Condensed"), ("compact", "Compact"))
 SORTS = (("manual", "As configured"), ("tightest", "Closest to limit first"))
+EXPIRED = (("hide", "Hide until used again"), ("dim", "Show dimmed"), ("show", "Show the error"))
 
 
 def view_of(cfg: dict[str, Any]) -> str:
@@ -74,8 +75,9 @@ class Widget:
         self.update_info = None
         self.update_error = ""
         self.tooltip = RowTooltip(self)
+        self._hook = self._make_fetch_hook(cfg)
         if not demo:
-            FETCH_HOOKS.append(self._on_fetch)
+            FETCH_HOOKS.append(self._hook)
             threading.Thread(target=self._prune_history, daemon=True).start()
         for ev in context_events():
             self.root.bind(ev, lambda e: self._popup(e, None))
@@ -87,10 +89,15 @@ class Widget:
             self._timers["update"] = self.root.after(15_000, self._auto_check)
 
     # ----- history / projections
-    def _on_fetch(self, p: Provider, snap: Snapshot) -> None:
-        if self.cfg.get("history", True):
-            from . import history
-            history.record(history.provider_key(p.type, p.name), snap)
+    @staticmethod
+    def _make_fetch_hook(cfg: dict[str, Any]):
+        # Runs on fetch threads, so it must not hold a reference to the widget: if a worker thread dropped
+        # the last reference, Tk objects would be destroyed off the main thread (Tcl aborts on that).
+        def on_fetch(p: Provider, snap: Snapshot) -> None:
+            if cfg.get("history", True):
+                from . import history
+                history.record(history.provider_key(p.type, p.name), snap)
+        return on_fetch
 
     @staticmethod
     def _prune_history() -> None:
@@ -160,6 +167,9 @@ class Widget:
                 if label:
                     m.add_command(label=f"Hide “{label}”", command=lambda: self.hide_window(p, label))
                     m.add_command(label=f"History of “{label}”…", command=lambda: self.open_history(p, label))
+                if p.parked:
+                    m.add_command(label=f"{p.name}: {p.park_reason}"[:90], state="disabled")
+                    m.add_command(label="Try again now", command=self.scheduler.refresh_all)
                 collapsed = bool(p.cfg.get("collapsed"))
                 m.add_command(label=f"{'Expand' if collapsed else 'Collapse'} {p.name}",
                               command=lambda: self.toggle_collapse(p))
@@ -274,8 +284,8 @@ class Widget:
                 self.root.after_cancel(t)
             except tk.TclError:
                 pass
-        if self._on_fetch in FETCH_HOOKS:
-            FETCH_HOOKS.remove(self._on_fetch)
+        if self._hook in FETCH_HOOKS:
+            FETCH_HOOKS.remove(self._hook)
         if not self.demo:
             self.cfg["x"], self.cfg["y"] = self.root.winfo_x(), self.root.winfo_y()
             save_config(self.cfg)
@@ -340,11 +350,12 @@ class Widget:
 
     def _signature(self):
         parts: list[Any] = [int(time.time() // 60), view_of(self.cfg), self.width, self.cfg.get("sort"),
+                            self.cfg.get("expired_display"),
                             bool(self.update_info and self.update_info.available)]
         for p in self.providers:
             with p.lock:
                 s = p.snapshot
-                parts.append((id(p), p.configured, s.fetched_at, s.error, len(s.windows),
+                parts.append((id(p), p.configured, p.parked, s.fetched_at, s.error, len(s.windows),
                               bool(p.cfg.get("collapsed")), tuple(p.cfg.get("hidden") or ())))
         return tuple(parts)
 
@@ -363,9 +374,14 @@ class Widget:
         self.tooltip.hide()
         for c in self.body.winfo_children():
             c.destroy()
-        visible = [p for p in self.providers if p.configured or not self.cfg.get("hide_unconfigured", True)]
+        expired = self.cfg.get("expired_display", "hide")
+        visible = [p for p in self.providers
+                   if (p.configured or not self.cfg.get("hide_unconfigured", True))
+                   and not (p.parked and expired == "hide")]
         if self.cfg.get("sort") == "tightest":
             visible.sort(key=self._tightness)
+        if expired == "dim":
+            visible.sort(key=lambda p: p.parked)  # stable: dimmed ones sink to the bottom
         if not visible:
             self._label(self.body, "No subscriptions found yet.\nClick ⚙ to add one or point the widget\n"
                         "at your Claude Code, Codex, Copilot… login.", THEME["muted"], 9).pack(anchor="w")
@@ -378,7 +394,10 @@ class Widget:
                     tk.Frame(self.body, bg=THEME["track"], height=1).pack(fill="x", pady=(8, 8))
                 else:
                     tk.Frame(self.body, bg=THEME["bg"], height=4 if view == "compact" else 7).pack(fill="x")
-            (self._render_compact if p.cfg.get("collapsed") else draw)(p)
+            if p.parked and expired == "dim":
+                self._render_parked(p)
+            else:
+                (self._render_compact if p.cfg.get("collapsed") else draw)(p)
         self._footer()
         self._bind_drag(self.body)
 
@@ -561,6 +580,18 @@ class Widget:
                 self.tooltip.bind([lab], p, w)
         if snap.error:
             self._label(nums, " ⚠", THEME["err"], 10).pack(side="left")
+
+    def _render_parked(self, p: Provider) -> None:
+        """One dim line for a subscription whose login expired; it comes back when the login is used."""
+        row = tk.Frame(self.body, bg=THEME["bg"])
+        row._ctx = (p, None)  # type: ignore[attr-defined]
+        row.pack(fill="x")
+        dot = tk.Canvas(row, width=8, height=8, bg=THEME["bg"], highlightthickness=0)
+        dot.create_oval(0, 0, 8, 8, outline=THEME["muted"], width=1)
+        dot.pack(side="left", padx=(0, 6))
+        self._label(row, p.name, THEME["muted"], 9, True).pack(side="left")
+        lab = self._label(row, "sign-in expired · returns when used", THEME["muted"], 8)
+        lab.pack(side="right")
 
     @staticmethod
     def _all_widgets(w) -> list:

@@ -36,6 +36,7 @@ Runs on **Windows, macOS and Ubuntu/Linux**. Pure Python standard library, no de
 - **Time to limit:** when a limit is on pace to run out before it resets, SubUsage says so ("⚠ At this pace: limit in ~47m"). It uses your burn rate over the last hour, or the average since the window started.
 - **Usage history:** every check is saved locally (30 days). Hover a limit for a mini chart of the current window with its projection, or right-click → **History…** for the last 24 h / 7 / 30 days.
 - **Declutter:** hide limits you don't care about, collapse a subscription to one line (▾), and sort so whatever's closest to its limit is on top.
+- **Only shows what you're using:** if a tool's saved login has expired because you haven't used it lately (say, Hermes), that subscription is parked. It's hidden, and SubUsage stops asking the vendor about it. It comes back by itself the moment you use the tool again and its login refreshes.
 - **Color thresholds:** green, then amber (70%), then red (90%). Both thresholds are adjustable.
 - **Uses the logins you already have:** reads the sign-in saved by Claude Code, Codex CLI, Gemini CLI, the Cursor app, JetBrains IDEs, Hermes and more. There are no passwords to enter.
 - **Add / remove from a catalog:** pick from the built-in subscriptions, paste an API key for key-based plans, or plug in anything else with a custom command.
@@ -119,7 +120,7 @@ On Windows, use `python` instead of `python3`. You can also double-click **`subu
   <img src="docs/history.png" alt="History window" width="500">
 </p>
 
-Subscriptions without a login on this machine are hidden. To list them anyway, turn off "Hide subscriptions with no login" in Settings.
+Subscriptions without a login on this machine are hidden. So are subscriptions whose login has **expired** because you haven't used that tool lately. SubUsage watches the login file (a cheap local check, no network) and brings the subscription back as soon as the tool refreshes it. Settings → **Expired logins** can instead show them as one dim line, or show the error. **Refresh now** also retries them. To list them anyway, turn off "Hide subscriptions with no login" in Settings.
 
 ## Adding and configuring subscriptions
 
@@ -232,7 +233,8 @@ python3 -m subusage --update         install it (then restart the widget)
 | Symptom | Fix |
 |---|---|
 | A subscription doesn't appear | It has no login on this machine. Run `--once` to see why, or turn off "Hide subscriptions with no login". |
-| "Token expired; open … once" | The CLI's saved login is stale. Run that CLI once (`claude`, `codex`, `gemini`, `hermes`) and it refreshes. |
+| A subscription disappeared | Its login expired (you haven't used that tool lately). Use the tool once and it reappears. To see these, set Settings → Expired logins → Show dimmed. |
+| "Login expired; it refreshes the next time you use …" | Shown when Expired logins is set to "Show the error". Use that tool once (`claude`, `codex`, `gemini`, Hermes, Cursor). |
 | "Rate limited, retrying in …" | The vendor throttled its usage endpoint. Claude's is strict: keep its interval at 300 s or more. Old data stays visible. |
 | Copilot: "didn't accept the GitHub CLI token" | Use **Sign in with GitHub** in Settings instead of the `gh` fallback. |
 | Cursor: "token is encrypted" | Paste a cursor.com session token (see [macOS notes](#platform-notes)). |

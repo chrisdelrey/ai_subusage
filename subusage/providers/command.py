@@ -33,6 +33,7 @@ class CommandProvider(Provider):
     setup = "Runs a command that prints usage JSON. Click “How to” for the format."
     accent = "#5aa9e6"
     multi = True
+    parks_on_auth = False
     fields = (
         Field("command", "Command", "command", "e.g. python ~/bin/my_usage.py"),
         Field("usage_url", "Usage page URL", "text", "Optional: opened on double-click."),

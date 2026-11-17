@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 from typing import Any, Optional
 
-from ..core import (Field, HttpError, NotConfigured, Provider, ProviderError, Snapshot, UsageWindow, fnum,
+from ..core import (AuthExpired, Field, HttpError, NotConfigured, Provider, ProviderError, Snapshot, UsageWindow, fnum,
                     http_json, normalize_quota, parse_time, title_case)
 
 
@@ -18,6 +18,7 @@ from ..core import (Field, HttpError, NotConfigured, Provider, ProviderError, Sn
 # --------------------------------------------------------------------------------------------------
 
 class ZaiProvider(Provider):
+    parks_on_auth = False  # a wrong key should stay visible
     type = "zai"
     default_name = "GLM (z.ai)"
     vendor = "Z.ai / Zhipu"
@@ -85,6 +86,7 @@ class ZaiProvider(Provider):
 # --------------------------------------------------------------------------------------------------
 
 class KimiProvider(Provider):
+    parks_on_auth = False  # a wrong key should stay visible
     type = "kimi"
     default_name = "Kimi Code"
     vendor = "Moonshot AI"
@@ -133,6 +135,7 @@ class KimiProvider(Provider):
 # --------------------------------------------------------------------------------------------------
 
 class SyntheticProvider(Provider):
+    parks_on_auth = False  # a wrong key should stay visible
     type = "synthetic"
     default_name = "Synthetic"
     vendor = "Synthetic"
@@ -190,6 +193,10 @@ class ClinePassProvider(Provider):
         Field("auth_path", "Cline settings file", "path", "Blank = ~/.cline/data/settings/providers.json"),
     )
 
+    @property
+    def parks_on_auth(self) -> bool:  # type: ignore[override]
+        return not self.setting("api_key")  # only park the `cline auth` login, not a pasted key
+
     def _token(self) -> str:
         key = self.setting("api_key")
         if key:
@@ -217,7 +224,7 @@ class ClinePassProvider(Provider):
                           {"Authorization": f"Bearer {self._token()}"})
         except HttpError as e:
             if e.status in (401, 403):
-                raise ProviderError("Cline rejected the credentials; run `cline auth` again") from None
+                raise AuthExpired("Cline login expired or was rejected; run `cline auth` again") from None
             raise
         return self.parse(j)
 

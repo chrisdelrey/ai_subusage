@@ -5,10 +5,13 @@ a token you paste, or the GitHub CLI's login (`gh auth token`).
 """
 from __future__ import annotations
 
+import hashlib
+import os
 import time
+from pathlib import Path
 from typing import Any, Optional
 
-from ..core import (Field, HttpError, NotConfigured, Provider, ProviderError, Snapshot, UsageWindow, fnum,
+from ..core import (IS_WIN, AuthExpired, Field, HttpError, NotConfigured, Provider, ProviderError, Snapshot, UsageWindow, fnum,
                     http_json, parse_time, run_cmd, title_case, which)
 
 # The VS Code Copilot OAuth app; device flow with read:user is enough for the usage endpoint.
@@ -28,6 +31,17 @@ class CopilotProvider(Provider):
         Field("device_login", "Sign in with GitHub", "device_login"),
         Field("host", "Enterprise host", "text", "Blank for github.com; e.g. octocorp.ghe.com"),
     )
+
+    def watch_signature(self):
+        """A new token in Settings or a new `gh auth login` both count as a changed login."""
+        gh_hosts = (Path(os.environ.get("APPDATA", "")) / "GitHub CLI" / "hosts.yml" if IS_WIN
+                    else Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "gh" / "hosts.yml")
+        try:
+            mtime = gh_hosts.stat().st_mtime_ns
+        except OSError:
+            mtime = None
+        tok = self.setting("token")
+        return (hashlib.sha256(tok.encode()).hexdigest()[:12] if tok else "", mtime)
 
     def _hosts(self) -> tuple[str, str]:
         host = self.setting("host").replace("https://", "").replace("http://", "").strip("/ ")
@@ -71,6 +85,8 @@ class CopilotProvider(Provider):
                 raise ProviderError("This GitHub account has no Copilot subscription") from None
             if e.status in (401, 403) and self.token_source == "gh":
                 raise ProviderError("Copilot didn't accept the GitHub CLI token; use Sign in with GitHub in Settings") from None
+            if e.status == 401:
+                raise AuthExpired("GitHub token expired or was revoked; Sign in with GitHub again in Settings") from None
             raise
         return self.parse(j)
 

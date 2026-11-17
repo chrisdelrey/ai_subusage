@@ -131,6 +131,39 @@ class UiSmokeTests(HomeTestCase):
         finally:
             w.quit()
 
+    def test_expired_display_modes(self):
+        from subusage import core
+        from subusage.core import Snapshot, UsageWindow
+        from subusage.ui import Widget
+        cfg = core.load_config()
+        w = Widget([], cfg)
+        try:
+            w.providers = core.build_providers({"providers": [{"type": "claude", "name": "A"},
+                                                              {"type": "nous", "name": "Hermes"}]})
+            a, h = w.providers
+            a.snapshot = Snapshot(windows=[UsageWindow("Weekly", 40)], fetched_at=time.time())
+            h.snapshot = Snapshot(error="Login expired")
+            h.park("Login expired")
+
+            def names():
+                w.render(force=True)
+                self.pump(w.root)
+                out = []
+                for row in w.body.winfo_children():
+                    for c in row.winfo_children():
+                        if isinstance(c, __import__("tkinter").Label):
+                            out.append(c.cget("text"))
+                return out
+            self.assertNotIn("Hermes", names())                   # default: hidden
+            w.cfg["expired_display"] = "dim"
+            got = names()
+            self.assertIn("Hermes", got)
+            self.assertIn("sign-in expired · returns when used", got)
+            w.cfg["expired_display"] = "show"
+            self.assertIn("Hermes", names())
+        finally:
+            w.quit()
+
     def test_demo_compact(self):
         from subusage.providers.command import demo_providers
         from subusage.ui import Widget
