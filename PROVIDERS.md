@@ -18,11 +18,17 @@ All endpoints below are **unofficial**: they're the ones the vendors' own apps u
 - **Shows:** 5-hour and weekly Codex windows, credits balance
 - **Notes:** ChatGPT's in-app chat message caps aren't exposed anywhere.
 
-### Copilot (GitHub): Free, Pro, Pro+, Business, Enterprise
+### GitHub Copilot: Free, Pro, Pro+, Business, Enterprise
 - **Login, in order:** token from **Sign in with GitHub** in Settings (OAuth device flow with the VS Code Copilot app, `read:user` scope), then a pasted token, then `gh auth token`
 - **Request:** `GET https://api.github.com/copilot_internal/user` (or `api.<enterprise host>`)
 - **Shows:** premium requests (paid plans); chat and completions (Free). Resets monthly.
 - **Notes:** Some `gh` CLI tokens are rejected by this endpoint. Sign in with GitHub always works.
+
+### GitHub (plan allowances): Free, Pro
+- **Login:** a fine-grained personal access token with **Account permissions → Plan: Read-only** (github.com → Settings → Developer settings → Fine-grained tokens). Falls back to `gh auth token`, but the GitHub CLI's token usually can't read billing.
+- **Requests (official REST API):** `GET /user` (login + plan), `GET /users/{login}/settings/billing/usage/summary?year&month`, falling back to `…/billing/usage`; `GET /users/{login}/settings/billing/premium_request/usage`
+- **Shows, for the current month:** Actions minutes vs. included (Free 2,000 / Pro 3,000; Windows ×2, macOS ×10; larger runners excluded). Codespaces compute (core-hours, Free 120 / Pro 180) and storage (GB-months, Free 15 / Pro 20), once used. Amount billed beyond the plan. Copilot premium requests beyond the allowance.
+- **Notes:** The API reports usage but not the included amounts, so those come from GitHub's published plan table (`INCLUDED` in `github.py`). Only usage billed to your personal account is included, not usage billed to an organization or enterprise. Requires the enhanced billing platform. Polls every 30 min by default. Override the plan in Settings if detection is wrong.
 
 ### Gemini (Google): Free, Google AI Pro / Ultra, Code Assist
 - **Login:** Gemini CLI: `~/.gemini/oauth_creds.json`

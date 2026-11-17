@@ -14,12 +14,13 @@ from .command import CommandProvider
 from .copilot import CopilotProvider
 from .cursor import CursorProvider
 from .gemini import GeminiProvider
+from .github import GitHubProvider
 from .jetbrains import JetBrainsProvider
 from .keyed import ClinePassProvider, KimiProvider, SyntheticProvider, ZaiProvider
 from .nous import NousProvider
 
 _ORDER: list[type[Provider]] = [
-    ClaudeProvider, CodexProvider, CopilotProvider, GeminiProvider, CursorProvider, JetBrainsProvider,
+    ClaudeProvider, CodexProvider, CopilotProvider, GitHubProvider, GeminiProvider, CursorProvider, JetBrainsProvider,
     NousProvider, ZaiProvider, KimiProvider, SyntheticProvider, ClinePassProvider, CommandProvider,
 ]
 PROVIDERS: dict[str, type[Provider]] = {c.type: c for c in _ORDER}

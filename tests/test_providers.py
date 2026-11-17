@@ -8,7 +8,7 @@ import unittest
 from unittest import mock
 
 from subusage.core import HttpError, NotConfigured, ProviderError
-from subusage.providers import CATALOG, PROVIDERS, claude, codex, copilot, cursor, gemini, keyed, nous
+from subusage.providers import CATALOG, PROVIDERS, claude, codex, copilot, cursor, gemini, github, keyed, nous
 from subusage.providers.command import CommandProvider
 from subusage.providers.jetbrains import JetBrainsProvider
 
@@ -168,6 +168,90 @@ class CopilotTests(HomeTestCase):
             self.assertEqual(st["interval"], 10)
             self.assertEqual(copilot.CopilotProvider.device_poll(st), "gho_new")
         self.assertEqual(http.last("device/code")["form"]["scope"], "read:user")
+
+
+class GitHubTests(HomeTestCase):
+    NOW = __import__("datetime").datetime(2026, 11, 16, tzinfo=__import__("datetime").timezone.utc)
+    ITEMS = [
+        {"product": "Actions", "sku": "actions_linux", "unitType": "minutes", "grossQuantity": 1000, "netAmount": 0},
+        {"product": "Actions", "sku": "Actions Windows", "unitType": "minutes", "grossQuantity": 100, "netAmount": 0},
+        {"product": "Actions", "sku": "actions_macos", "unitType": "minutes", "grossQuantity": 50, "netAmount": 0},
+        {"product": "Actions", "sku": "Actions Linux 4-core", "unitType": "minutes", "grossQuantity": 999, "netAmount": 5.0},
+        {"product": "Codespaces", "sku": "Codespaces compute 4 core", "unitType": "hours", "grossQuantity": 9, "netAmount": 0},
+        {"product": "Codespaces", "sku": "codespaces_storage", "unitType": "gigabyte-hours", "grossQuantity": 7200,
+         "netAmount": 0},
+        {"product": "Copilot", "sku": "Copilot Premium Request", "unitType": "requests", "grossQuantity": 400,
+         "netAmount": 4.0},
+    ]
+    PREMIUM = [{"product": "Copilot", "model": "GPT-5", "grossQuantity": 400, "discountQuantity": 300,
+                "netQuantity": 100, "netAmount": 4.0}]
+
+    def test_parse(self):
+        s = github.GitHubProvider.parse(self.ITEMS, self.PREMIUM, "pro", self.NOW)
+        self.assertEqual(s.plan, "Pro")
+        w = {x.label: x for x in s.windows}
+        # 1000 + 100×2 + 50×10 = 1700 of 3000 (the 4-core larger runner doesn't use included minutes)
+        self.assertEqual(w["Actions minutes"].detail, "1,700 of 3,000 min")
+        self.assertAlmostEqual(w["Actions minutes"].used_pct, 1700 / 3000 * 100)
+        self.assertEqual(w["Codespaces compute"].detail, "36.0 of 180 core-h")     # 9 h × 4 cores
+        self.assertEqual(w["Codespaces storage"].detail, "10.0 of 20 GB-mo")      # 7200 GB-h / 720 h in Nov
+        self.assertEqual(w["Actions minutes"].length_s, 30 * 86400)
+        self.assertIn("Copilot requests beyond plan: 100 ($4.00)", s.notes)
+        self.assertIn("Billed beyond plan this month: $9.00", s.notes)
+
+    def test_free_plan_no_codespaces(self):
+        s = github.GitHubProvider.parse(self.ITEMS[:1], [], "free", self.NOW)
+        self.assertEqual([x.label for x in s.windows], ["Actions minutes"])
+        self.assertEqual(s.windows[0].detail, "1,000 of 2,000 min")
+        self.assertEqual(s.notes, ["Nothing billed beyond your plan this month"])
+
+    def test_fetch_summary_and_plan_detection(self):
+        github.GitHubProvider._me.clear()
+        http = FakeHTTP({"/users/octo/settings/billing/usage/summary": {"usageItems": self.ITEMS[:1]},
+                         "/users/octo/settings/billing/premium_request/usage": {"usageItems": []},
+                         "api.github.com/user": {"login": "octo", "plan": {"name": "pro"}}})  # last: prefix of /users
+        with mock.patch.object(github, "http_json", http):
+            s = github.GitHubProvider({"token": "github_pat_x"}).fetch()
+        self.assertEqual((s.plan, s.windows[0].detail), ("Pro", "1,000 of 3,000 min"))
+        self.assertEqual(http.last("summary")["headers"]["Authorization"], "Bearer github_pat_x")
+        self.assertRegex(http.last("summary")["url"], r"year=\d{4}&month=\d{1,2}$")
+
+    def test_fallback_to_usage_report(self):
+        github.GitHubProvider._me.clear()
+        http = FakeHTTP({"/usage/summary": HttpError(404, ""),
+                         "/settings/billing/usage?": {"usageItems": [
+                             {"date": "2026-11-01", "product": "Actions", "sku": "Actions Linux", "quantity": 30,
+                              "unitType": "minutes"}]},
+                         "/premium_request/usage": HttpError(404, ""),
+                         "api.github.com/user": {"login": "octo"}})
+        with mock.patch.object(github, "http_json", http):
+            s = github.GitHubProvider({"token": "t", "plan": "free"}).fetch()
+        self.assertEqual(s.windows[0].detail, "30 of 2,000 min")
+
+    def test_token_errors(self):
+        github.GitHubProvider._me.clear()
+        http = FakeHTTP({"/usage/summary": HttpError(403, ""), "api.github.com/user": {"login": "octo"}})
+        with mock.patch.object(github, "which", return_value="/usr/bin/gh"), \
+                mock.patch.object(github, "run_cmd", return_value="gho_cli"), mock.patch.object(github, "http_json", http):
+            with self.assertRaisesRegex(ProviderError, "Plan: Read-only.*GitHub CLI"):
+                github.GitHubProvider({}).fetch()
+        with mock.patch.object(github, "which", return_value=None):
+            with self.assertRaises(NotConfigured):
+                github.GitHubProvider({}).fetch()
+        self.assertFalse(github.GitHubProvider({}).parks_on_auth)
+
+
+class RenameMigrationTests(HomeTestCase):
+    def test_copilot_renamed_with_history(self):
+        from subusage import core, history
+        from subusage.core import Snapshot, UsageWindow
+        history.record("copilot:Copilot", Snapshot(windows=[UsageWindow("Premium requests", 10)], fetched_at=self.now))
+        core.save_config({"providers": [{"type": "copilot", "name": "Copilot"}, {"type": "copilot", "name": "Work"}]})
+        cfg = core.load_config()
+        self.assertEqual([p["name"] for p in cfg["providers"]], ["GitHub Copilot", "Work"])   # custom names kept
+        self.assertEqual(json.loads(core.config_path().read_text())["providers"][0]["name"], "GitHub Copilot")
+        self.assertEqual(len(history.series("copilot:GitHub Copilot", "Premium requests", 0)), 1)
+        self.assertEqual(history.series("copilot:Copilot", "Premium requests", 0), [])
 
 
 class GeminiTests(HomeTestCase):

@@ -55,6 +55,17 @@ def record(key: str, snap: Snapshot, ts: Optional[float] = None) -> None:
         log(f"history: record failed: {e}")
 
 
+def rename_key(old: str, new: str) -> None:
+    """Keep history when a subscription is renamed."""
+    if not db_path().exists():
+        return
+    try:
+        with _lock, _connect() as con:
+            con.execute("UPDATE samples SET key = ? WHERE key = ?", (new, old))
+    except sqlite3.Error as e:
+        log(f"history: rename failed: {e}")
+
+
 def series(key: str, label: str, since: float) -> list[Sample]:
     try:
         with _lock, _connect() as con:

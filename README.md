@@ -40,7 +40,7 @@ Runs on **Windows, macOS and Ubuntu/Linux**. Pure Python standard library, no de
 - **Color thresholds:** green, then amber (70%), then red (90%). Both thresholds are adjustable.
 - **Uses the logins you already have:** reads the sign-in saved by Claude Code, Codex CLI, Gemini CLI, the Cursor app, JetBrains IDEs, Hermes and more. There are no passwords to enter.
 - **Add / remove from a catalog:** pick from the built-in subscriptions, paste an API key for key-based plans, or plug in anything else with a custom command.
-- **Settings window:** a login-file field for each subscription with **Find…** (also searches WSL on Windows), **Browse…** and **Test**, plus one-click **Sign in with GitHub** for Copilot.
+- **Settings window:** a login-file field for each subscription with **Find…** (also searches WSL on Windows), **Browse…** and **Test**, plus one-click **Sign in with GitHub** for GitHub Copilot.
 - **Gentle on vendors:** polls every 5 minutes by default, backs off on rate limits (honoring `Retry-After`), and keeps showing the last good data while it waits.
 - **Three views:** Full, Condensed (one tight row per limit) and Compact (one line per subscription). Plus opacity, always-on-top, and start at login on all three OSes.
 - **Built-in updates with release notes:** shows the version and build, checks GitHub daily, shows what's new, and updates in one click.
@@ -51,7 +51,8 @@ Runs on **Windows, macOS and Ubuntu/Linux**. Pure Python standard library, no de
 |---|---|---|---|
 | **Claude** (Anthropic) | Pro, Max | Claude Code login (file, or macOS Keychain) | 5-hour session, weekly, per-model weekly, extra usage |
 | **ChatGPT** (OpenAI) | Plus, Pro, Business | Codex CLI login (`codex login`) | 5-hour and weekly Codex limits, credits |
-| **Copilot** (GitHub) | Free, Pro, Pro+, Business, Enterprise | Sign in with GitHub (in Settings) or `gh auth login` | Premium requests, chat/completions (Free) |
+| **GitHub Copilot** | Free, Pro, Pro+, Business, Enterprise | Sign in with GitHub (in Settings) or `gh auth login` | Premium requests, chat/completions (Free) |
+| **GitHub** (plan allowances) | Free, Pro | Fine-grained token with Plan (read) | Actions minutes, Codespaces compute and storage vs. included; billed beyond plan; Copilot overage |
 | **Gemini** (Google) | Free, Google AI Pro / Ultra, Code Assist | Gemini CLI login | Daily Pro / Flash / Flash Lite quotas |
 | **Cursor** | Hobby, Pro, Pro+, Ultra, Teams | Cursor app login (read-only) | Included usage, Auto / API split, on-demand, team pool |
 | **JetBrains AI** | AI Free, AI Pro, AI Ultimate | Local IDE quota file (no network) | Monthly credits, top-up credits |
@@ -135,7 +136,7 @@ Each subscription's row in Settings has:
 
 - **Login file** with **Find…** and **Browse…**. Leave it blank for the default location. On Windows, **Find…** also searches every WSL distro, which helps if Claude Code or Codex runs in WSL.
 - **API key** for key-based plans. Write `env:VAR_NAME` to read the key from an environment variable instead of saving it.
-- **Sign in with GitHub** (Copilot): shows a code, copies it, and opens github.com/login/device.
+- **Sign in with GitHub** (GitHub Copilot): shows a code, copies it, and opens github.com/login/device.
 - **Test**: checks the login right away and shows the plan and current percentages.
 - **Name, refresh interval, on/off, Remove.**
 
@@ -197,7 +198,7 @@ Updates are only installed when you click **Update now**. The daily check just l
 
 **Windows**
 - If a CLI runs inside **WSL**, use **Find…** in Settings. It finds logins under `\\wsl.localhost\<distro>\home\<you>\`. Reading a WSL path starts that distro if it isn't running.
-- Copilot's `gh auth token` fallback needs the GitHub CLI on your PATH. **Sign in with GitHub** works without it.
+- GitHub Copilot's `gh auth token` fallback needs the GitHub CLI on your PATH. **Sign in with GitHub** works without it.
 
 **macOS**
 - Claude Code stores its login in the **Keychain**. The first time, macOS asks whether Python may read the "Claude Code-credentials" item. Choose **Always Allow** to avoid repeat prompts.
@@ -213,7 +214,7 @@ Updates are only installed when you click **Update now**. The daily check just l
 
 - **It only reads logins, never writes them.** SubUsage reads tokens that your CLIs and apps already saved. It never refreshes them on disk, rewrites them, or changes their permissions, so it can't sign you out of anything. Gemini is the one exception to "never refreshes": its short-lived token is refreshed **in memory only**.
 - **It only talks to the vendors.** Each provider calls only its own vendor's usage endpoint. There's no telemetry, no analytics, and no third-party server.
-- **Secrets in the config file:** API keys and the Copilot token you add in Settings are stored in plain text in your config file. On macOS/Linux the file is `chmod 600`; on Windows it lives in your user-only `%APPDATA%`. To keep a key out of the file entirely, use `env:VAR_NAME`.
+- **Secrets in the config file:** API keys and GitHub tokens you add in Settings are stored in plain text in your config file. On macOS/Linux the file is `chmod 600`; on Windows it lives in your user-only `%APPDATA%`. To keep a key out of the file entirely, use `env:VAR_NAME`.
 - **History stays local:** usage samples go to `history.db` next to the config file and are pruned after 30 days. Turn history off or clear it in Settings.
 - **The source is small:** one file per provider under `subusage/providers/`. Read it before you run it.
 
@@ -238,7 +239,8 @@ python3 -m subusage --update         install it (then restart the widget)
 | A subscription disappeared | Its login expired (you haven't used that tool lately). Use the tool once and it reappears. To see these, set Settings → Expired logins → Show dimmed. |
 | "Login expired; it refreshes the next time you use …" | Shown when Expired logins is set to "Show the error". Use that tool once (`claude`, `codex`, `gemini`, Hermes, Cursor). |
 | "Rate limited, retrying in …" | The vendor throttled its usage endpoint. Claude's is strict: keep its interval at 300 s or more. Old data stays visible. |
-| Copilot: "didn't accept the GitHub CLI token" | Use **Sign in with GitHub** in Settings instead of the `gh` fallback. |
+| GitHub Copilot: "didn't accept the GitHub CLI token" |
+| GitHub: "needs a fine-grained token with Account → Plan: Read-only" | Create one at github.com → Settings → Developer settings → Fine-grained tokens. Under Account permissions, set **Plan** to Read-only. Paste it into the GitHub row in Settings. | Use **Sign in with GitHub** in Settings instead of the `gh` fallback. |
 | Cursor: "token is encrypted" | Paste a cursor.com session token (see [macOS notes](#platform-notes)). |
 | JetBrains numbers look old | The IDE only saves its quota file now and then. Open the IDE to update it. |
 | `tkinter` missing | Ubuntu: `sudo apt install python3-tk`. Homebrew: `brew install python-tk`. |

@@ -3,6 +3,10 @@
 Every release has notes here; the release workflow publishes them, and the widget shows them before
 you update ("What's new") and once after it restarts.
 
+## 2.4.0
+- **New: GitHub plan allowances.** A new "GitHub" subscription tracks this month's Actions minutes and Codespaces compute and storage against what your Free or Pro plan includes. It also shows how much has been billed beyond the plan, and Copilot premium requests beyond your allowance. It uses GitHub's official billing API and needs a fine-grained token with Account → Plan: Read-only.
+- **Copilot is now "GitHub Copilot".** Existing setups that used the old default name are renamed automatically, and their usage history is kept.
+
 ## 2.3.0
 - **No more flashing on refresh:** the widget now builds its layout once and updates numbers, bars and countdowns in place. It only rebuilds when the layout itself changes (adding, hiding or collapsing something, switching views), and then swaps in the new layout in one step.
 - **Release notes with every update:** when an update is available, Settings → About & updates shows a preview and a **What's new** button with the notes for every version since yours. After updating, a **What's new** window appears once, also after updating with `git pull` or pip. `--check-update` prints the notes too.

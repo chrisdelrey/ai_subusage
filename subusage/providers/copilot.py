@@ -20,7 +20,8 @@ CLIENT_ID = "Iv1.b507a08c87ecfe98"
 
 class CopilotProvider(Provider):
     type = "copilot"
-    default_name = "Copilot"
+    default_name = "GitHub Copilot"
+    old_names = ("Copilot",)          # renamed in 2.4; configs using the old default are migrated
     vendor = "GitHub"
     plans = "Free, Pro, Pro+, Business, Enterprise"
     setup = "Use “Sign in with GitHub” in Settings, or log in with the GitHub CLI (`gh auth login`)."
