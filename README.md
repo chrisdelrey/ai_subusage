@@ -33,6 +33,9 @@ Runs on **Windows, macOS and Ubuntu/Linux**. Pure Python standard library, no de
 
 - **Every limit at a glance:** 5-hour sessions, weekly caps, daily model quotas, monthly credits, each with a reset countdown.
 - **Pace marker:** a white tick on each bar shows where you'd be if you used the window evenly. If the bar is past the tick, you're burning faster than the window allows.
+- **Time to limit:** when a limit is on pace to run out before it resets, SubUsage says so ("⚠ At this pace: limit in ~47m"). It uses your burn rate over the last hour, or the average since the window started.
+- **Usage history:** every check is saved locally (30 days). Hover a limit for a mini chart of the current window with its projection, or right-click → **History…** for the last 24 h / 7 / 30 days.
+- **Declutter:** hide limits you don't care about, collapse a subscription to one line (▾), and sort so whatever's closest to its limit is on top.
 - **Color thresholds:** green, then amber (70%), then red (90%). Both thresholds are adjustable.
 - **Uses the logins you already have:** reads the sign-in saved by Claude Code, Codex CLI, Gemini CLI, the Cursor app, JetBrains IDEs, Hermes and more. There are no passwords to enter.
 - **Add / remove from a catalog:** pick from the built-in subscriptions, paste an API key for key-based plans, or plug in anything else with a custom command.
@@ -104,9 +107,17 @@ On Windows, use `python` instead of `python3`. You can also double-click **`subu
 | Settings | Click **⚙** (bottom right) |
 | Refresh now | Click **⟳**, or use the menu. There's a 60-second floor so you can't trip vendor rate limits. |
 | Open a vendor's usage page | Double-click the subscription's name |
+| Details for one limit | Hover it: usage, reset, burn rate, projection, and this window's chart |
+| Hide a limit / see its history | Right-click the limit → **Hide "…"** / **History of "…"**. Unhide from the same menu or in Settings. |
+| Collapse a subscription | Click **▾** next to its name (one line, worst percentages only). Menu → **Expand all** to undo. |
+| Most urgent first | Menu → **Sort → Closest to limit first**. Limits on pace to run out come first, then the highest percentage. |
 | Change density | Menu → **View**: **Full** (bars + details), **Condensed** (one row per limit with a mini bar), **Compact** (one line per subscription) |
 
 <p align="center"><img src="docs/views.png" alt="Full, Condensed and Compact views" width="720"></p>
+<p align="center">
+  <img src="docs/tooltip.png" alt="Hover tooltip with burn rate, projection and chart" width="300">
+  <img src="docs/history.png" alt="History window" width="500">
+</p>
 
 Subscriptions without a login on this machine are hidden. To list them anyway, turn off "Hide subscriptions with no login" in Settings.
 
@@ -200,6 +211,7 @@ Updates are only installed when you click **Update now**. The daily check just l
 - **It only reads logins, never writes them.** SubUsage reads tokens that your CLIs and apps already saved. It never refreshes them on disk, rewrites them, or changes their permissions, so it can't sign you out of anything. Gemini is the one exception to "never refreshes": its short-lived token is refreshed **in memory only**.
 - **It only talks to the vendors.** Each provider calls only its own vendor's usage endpoint. There's no telemetry, no analytics, and no third-party server.
 - **Secrets in the config file:** API keys and the Copilot token you add in Settings are stored in plain text in your config file. On macOS/Linux the file is `chmod 600`; on Windows it lives in your user-only `%APPDATA%`. To keep a key out of the file entirely, use `env:VAR_NAME`.
+- **History stays local:** usage samples go to `history.db` next to the config file and are pruned after 30 days. Turn history off or clear it in Settings.
 - **The source is small:** one file per provider under `subusage/providers/`. Read it before you run it.
 
 ## Command line

@@ -81,6 +81,7 @@ class HttpJsonTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.srv.shutdown()
+        cls.srv.server_close()
         os.environ.update(cls._proxy)
 
     def test_get_with_headers(self):

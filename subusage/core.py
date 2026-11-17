@@ -331,6 +331,10 @@ class Field:
     default: str = ""
 
 
+# Called after every successful fetch with (provider, snapshot); the widget uses this to record history.
+FETCH_HOOKS: list[Callable[["Provider", "Snapshot"], None]] = []
+
+
 class Provider:
     """Subclass this to add a subscription. Implement fetch() and declare the class attributes."""
 
@@ -423,6 +427,11 @@ class Provider:
             with self.lock:
                 self.snapshot, self.configured, self.backoff = snap, True, 0.0
             self.next_at = time.time() + self.poll
+            for hook in list(FETCH_HOOKS):
+                try:
+                    hook(self, snap)
+                except Exception as e:  # a hook must never break fetching
+                    log(f"fetch hook failed: {e}")
         except NotConfigured as e:
             with self.lock:
                 self.configured = False
@@ -508,6 +517,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "providers": [],          # filled from DEFAULT_PROVIDERS on first run
     "always_on_top": True,
     "view": "full",             # full | condensed | compact
+    "sort": "manual",           # manual | tightest
+    "history": True,            # keep local usage history (enables projections and charts)
+    "projections": True,        # warn when a limit is on pace to run out before it resets
     "check_updates": True,
     "opacity": 0.95,
     "width": 300,

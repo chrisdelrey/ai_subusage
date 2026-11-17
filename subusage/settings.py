@@ -17,7 +17,7 @@ from .core import (IS_LINUX, IS_MAC, HttpError, Provider, Snapshot, bg, config_p
                    open_path)
 from .providers import CATALOG, PROVIDERS
 from .providers.command import CUSTOM_HELP
-from .ui import FONT, THEME, VIEWS, fsize, view_of
+from .ui import FONT, SORTS, THEME, VIEWS, fsize, view_of
 
 AUTH_LABEL = {"auto": "Uses your existing login", "key": "Paste an API key", "command": "Your own command"}
 
@@ -61,6 +61,21 @@ def toggle(parent, text, value, bg=None):
     var.trace_add("write", paint)
     paint()
     lab.pack(side="left", padx=(0, 14))
+    return var
+
+
+def choice(parent, options, value, bg=None):
+    """A small dark dropdown. Returns a StringVar."""
+    var = tk.StringVar(value=value)
+    names = dict(options)
+    mb = tk.Menubutton(parent, text=names.get(value, value), bg=THEME["button"], fg=THEME["fg"],
+                       activebackground=THEME["button_hover"], activeforeground=THEME["fg"], relief="flat",
+                       font=(FONT, fsize(9)), padx=8, pady=1)
+    menu = tk.Menu(mb, tearoff=0)
+    for key, label in options:
+        menu.add_command(label=label, command=lambda k=key, l=label: (var.set(k), mb.configure(text=l)))
+    mb.configure(menu=menu)
+    mb.pack(side="left", padx=(0, 14))
     return var
 
 
@@ -164,18 +179,18 @@ class SettingsDialog:
         flags = tk.Frame(outer, bg=THEME["bg"])
         flags.pack(fill="x", pady=(8, 0))
         lbl(flags, "View", THEME["muted"]).pack(side="left", padx=(0, 6))
-        self.v_view = tk.StringVar(value=view_of(self.cfg))
-        names = dict(VIEWS)
-        mb = tk.Menubutton(flags, text=names[self.v_view.get()], bg=THEME["button"], fg=THEME["fg"],
-                           activebackground=THEME["button_hover"], activeforeground=THEME["fg"], relief="flat",
-                           font=(FONT, fsize(9)), padx=8, pady=1)
-        vm = tk.Menu(mb, tearoff=0)
-        for key, label in VIEWS:
-            vm.add_command(label=label, command=lambda k=key, l=label: (self.v_view.set(k), mb.configure(text=l)))
-        mb.configure(menu=vm)
-        mb.pack(side="left", padx=(0, 14))
+        self.v_view = choice(flags, VIEWS, view_of(self.cfg))
+        lbl(flags, "Sort", THEME["muted"]).pack(side="left", padx=(0, 6))
+        self.v_sort = choice(flags, SORTS, self.cfg.get("sort", "manual"))
         self.v_top = toggle(flags, "Always on top", self.cfg.get("always_on_top", True))
-        self.v_hide = toggle(flags, "Hide subscriptions with no login", self.cfg.get("hide_unconfigured", True))
+        flags2 = tk.Frame(outer, bg=THEME["bg"])
+        flags2.pack(fill="x", pady=(8, 0))
+        self.v_hide = toggle(flags2, "Hide subscriptions with no login", self.cfg.get("hide_unconfigured", True))
+        self.v_proj = toggle(flags2, "Warn when a limit will run out before it resets", self.cfg.get("projections", True))
+        flags3 = tk.Frame(outer, bg=THEME["bg"])
+        flags3.pack(fill="x", pady=(8, 0))
+        self.v_hist = toggle(flags3, "Keep usage history on this computer (30 days)", self.cfg.get("history", True))
+        button(flags3, "Clear history", self._clear_history, subtle=True, small=True).pack(side="left")
 
         self._about(outer)
 
@@ -216,6 +231,12 @@ class SettingsDialog:
 
     def _bg(self, fn, done):
         bg(fn, lambda r: self.alive() and done(r), self.top.after)
+
+    def _clear_history(self) -> None:
+        from tkinter import messagebox
+        from . import history
+        if messagebox.askyesno("Clear history", "Delete all locally stored usage history?", parent=self.top):
+            history.clear()
 
     # ----- about & updates
     def _about(self, outer) -> None:
@@ -313,6 +334,8 @@ class SettingsDialog:
 
         for fld in cls.fields:
             self._field(row, fld)
+        if pc.get("hidden"):
+            self._hidden_line(row)
 
         foot = tk.Frame(f, bg=P)
         foot.pack(fill="x", pady=(6, 0))
@@ -366,6 +389,22 @@ class SettingsDialog:
             hint = f"{hint}  Default: {d}" if d else hint
         if hint:
             lbl(f, hint, THEME["muted"], 7, wraplength=600).pack(anchor="w", padx=(0, 0))
+
+    def _hidden_line(self, row) -> None:
+        P = THEME["panel"]
+        line = tk.Frame(row["frame"], bg=P)
+        line.pack(fill="x", pady=(6, 0))
+        lbl(line, "Hidden limits", THEME["muted"], width=14, anchor="w").pack(side="left")
+
+        def unhide(label, chip):
+            row["cfg"]["hidden"] = [h for h in row["cfg"].get("hidden", []) if h != label]
+            if not row["cfg"]["hidden"]:
+                row["cfg"].pop("hidden")
+            chip.destroy()
+        for label in list(row["cfg"].get("hidden", [])):
+            chip = button(line, f"{label}  ✕", lambda: None, small=True)
+            chip.bind("<Button-1>", lambda _e, l=label, c=chip: unhide(l, c))
+            chip.pack(side="left", padx=(0, 6))
 
     def _status(self, row, text, color=None):
         if row["status"].winfo_exists():
@@ -524,6 +563,9 @@ class SettingsDialog:
         cfg["opacity"] = round(num(self.v_opacity, 95, 30, 100) / 100, 2)
         cfg["always_on_top"] = bool(self.v_top.get())
         cfg["view"] = self.v_view.get()
+        cfg["sort"] = self.v_sort.get()
+        cfg["projections"] = bool(self.v_proj.get())
+        cfg["history"] = bool(self.v_hist.get())
         cfg.pop("compact", None)
         cfg["check_updates"] = bool(self.v_updates.get())
         cfg["hide_unconfigured"] = bool(self.v_hide.get())
