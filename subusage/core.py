@@ -624,6 +624,21 @@ def default_config() -> dict[str, Any]:
     return cfg
 
 
+def migrate_config(cfg: dict[str, Any]) -> bool:
+    """Upgrade configs written by older versions. Returns True if anything changed."""
+    from .providers import PROVIDERS
+    changed = False
+    for pc in cfg.get("providers", []):
+        cls = PROVIDERS.get(pc.get("type"))
+        old_names = getattr(cls, "old_names", ())
+        if cls and pc.get("name") in old_names:  # a default name that was later renamed
+            from . import history
+            history.rename_key(history.provider_key(cls.type, pc["name"]), history.provider_key(cls.type, cls.default_name))
+            pc["name"] = cls.default_name
+            changed = True
+    return changed
+
+
 def load_config() -> dict[str, Any]:
     cfg = default_config()
     p = config_path()
@@ -632,6 +647,8 @@ def load_config() -> dict[str, Any]:
             user = json.loads(p.read_text(encoding="utf-8"))
             if isinstance(user, dict):
                 cfg.update(user)
+                if migrate_config(cfg):
+                    save_config(cfg)
         else:
             save_config(cfg)
     except (OSError, ValueError) as e:

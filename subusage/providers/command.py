@@ -88,7 +88,7 @@ def demo_providers() -> list[Provider]:
                                           ("Weekly · Opus", 12, 2 * d + 5 * h, 7 * d)], "Max", accent="#d97757"),
         DemoProvider({"name": "ChatGPT"}, [("Session (5h)", 91, 2820, 5 * h), ("Weekly", 44, 4 * d, 7 * d)], "Plus",
                      accent="#10a37f"),
-        DemoProvider({"name": "Copilot"}, [("Premium requests", 64, 14 * d, 30 * d)], "Pro", accent="#8250df"),
+        DemoProvider({"name": "GitHub Copilot"}, [("Premium requests", 64, 14 * d, 30 * d)], "Pro", accent="#8250df"),
         DemoProvider({"name": "Gemini"}, [("Pro (daily)", 22, 9 * h, d), ("Flash (daily)", 5, 9 * h, d)],
                      "Google AI Pro", accent="#4285f4"),
         DemoProvider({"name": "Nous"}, [("Today", 18, 9 * h, d), ("This week", 71, 3 * d, 7 * d)], "Plus",
