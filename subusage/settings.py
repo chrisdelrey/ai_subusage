@@ -227,6 +227,8 @@ class SettingsDialog:
             self.picker.destroy()
         if self.alive():
             self.top.destroy()
+        import gc
+        gc.collect()  # free the dialog's Tk variables here, on the UI thread, not later on a fetch thread
 
     def _num(self, parent, label, value, col):
         lbl(parent, label, THEME["muted"]).grid(row=0, column=col * 2, sticky="w", padx=(0, 4))

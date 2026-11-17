@@ -1,4 +1,5 @@
 """Smoke test for the widget, Settings and the Add-subscription picker. Skipped without a display."""
+import gc
 import os
 import sys
 import time
@@ -12,6 +13,7 @@ try:
     import tkinter as tk
     _root = tk.Tk()
     _root.destroy()
+    del _root
     HAVE_DISPLAY = True
 except Exception:  # no tkinter or no display
     HAVE_DISPLAY = False
@@ -19,6 +21,13 @@ except Exception:  # no tkinter or no display
 
 @unittest.skipUnless(HAVE_DISPLAY, "needs tkinter and a display")
 class UiSmokeTests(HomeTestCase):
+    # Each test makes (and destroys) its own Tk root. Collect the dead roots here, on the main thread:
+    # if the cyclic GC happened to free one from a background fetch thread, Tcl would abort the process.
+    # (The real widget has a single root for its whole life, so this only matters in tests.)
+    def tearDown(self):
+        gc.collect()
+        super().tearDown()
+
     def pump(self, root, n=20):
         for _ in range(n):
             root.update()
