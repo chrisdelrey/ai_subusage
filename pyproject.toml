@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-subusage"
+dynamic = ["version"]
+description = "Desktop widget for AI subscription usage limits (Claude, ChatGPT, Copilot, Gemini, Cursor, JetBrains AI, Nous and more)"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "Chris Delrey" }]
+keywords = ["claude", "chatgpt", "copilot", "gemini", "cursor", "usage", "widget", "rate limits", "subscription"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Environment :: X11 Applications",
+    "Topic :: Utilities",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/chrisdelrey/ai_subusage"
+Issues = "https://github.com/chrisdelrey/ai_subusage/issues"
+
+[project.scripts]
+subusage = "subusage.__main__:main"
+
+[project.gui-scripts]
+subusage-widget = "subusage.__main__:main"
+
+[tool.setuptools]
+packages = ["subusage", "subusage.providers"]
+
+[tool.setuptools.dynamic]
+version = { attr = "subusage.__version__" }
