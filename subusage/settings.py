@@ -17,7 +17,7 @@ from .core import (IS_LINUX, IS_MAC, HttpError, Provider, Snapshot, bg, config_p
                    open_path)
 from .providers import CATALOG, PROVIDERS
 from .providers.command import CUSTOM_HELP
-from .ui import EXPIRED, FONT, SORTS, THEME, VIEWS, fsize, view_of
+from .ui import EXPIRED, FONT, SORTS, THEME, TRAY_MODES, VIEWS, fsize, view_of
 
 AUTH_LABEL = {"auto": "Uses your existing login", "key": "Paste an API key", "command": "Your own command"}
 
@@ -234,6 +234,17 @@ class SettingsDialog:
         lbl(flags4, "Expired logins", THEME["muted"]).pack(side="left", padx=(0, 6))
         self.v_expired = choice(flags4, EXPIRED, self.cfg.get("expired_display", "hide"))
         lbl(flags4, "e.g. Hermes when you haven't used it lately; it comes back once you do", THEME["muted"], 7).pack(side="left")
+        flags5 = tk.Frame(outer, bg=THEME["bg"])
+        flags5.pack(fill="x", pady=(8, 0))
+        lbl(flags5, "System tray", THEME["muted"]).pack(side="left", padx=(0, 6))
+        from . import tray
+        if tray.available():
+            self.v_tray = choice(flags5, TRAY_MODES, self.cfg.get("tray", "both"))
+            lbl(flags5, "left-click the icon to show/hide the widget", THEME["muted"], 7).pack(side="left")
+        else:
+            self.v_tray = tk.StringVar(value="off")
+            lbl(flags5, "Windows only for now (macOS menu bar / Linux tray: contributions welcome)",
+                THEME["muted"], 8).pack(side="left")
         flags3 = tk.Frame(outer, bg=THEME["bg"])
         flags3.pack(fill="x", pady=(8, 0))
         self.v_hist = toggle(flags3, "Keep usage history on this computer (30 days)", self.cfg.get("history", True))
@@ -296,8 +307,9 @@ class SettingsDialog:
         top = tk.Frame(box, bg=THEME["panel"])
         top.pack(fill="x")
         kind = {"git": "git checkout", "pip": "pip/pipx install", "source": "downloaded folder"}[update.install_kind()]
+        from . import AUTHOR
         lbl(top, f"{APP} {update.version_string()}", THEME["fg"], 9, True).pack(side="left")
-        lbl(top, f"  ·  {kind}", THEME["muted"], 8).pack(side="left")
+        lbl(top, f"  ·  by {AUTHOR}  ·  {kind}", THEME["muted"], 8).pack(side="left")
         button(top, "Repo", lambda: webbrowser.open(update.REPO_URL), subtle=True, small=True).pack(side="right")
         self.btn_update = button(top, "Update now", self._apply_update, primary=True, small=True)
         self.btn_notes = button(top, "What's new", self._show_new_notes, small=True)
@@ -641,6 +653,7 @@ class SettingsDialog:
         cfg["view"] = self.v_view.get()
         cfg["sort"] = self.v_sort.get()
         cfg["expired_display"] = self.v_expired.get()
+        cfg["tray"] = self.v_tray.get()
         cfg["projections"] = bool(self.v_proj.get())
         cfg["history"] = bool(self.v_hist.get())
         cfg.pop("compact", None)

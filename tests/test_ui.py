@@ -255,6 +255,70 @@ class UiSmokeTests(HomeTestCase):
         finally:
             root.destroy()
 
+    def test_tray_modes_with_fake_tray(self):
+        import queue as q
+        from subusage import core, tray
+        from subusage.core import Snapshot, UsageWindow
+        from subusage.ui import Widget
+
+        class FakeTray:
+            instances = []
+
+            def __init__(self, events):
+                self.events, self.ok, self.widget_visible, self.states, self.stopped = events, True, True, [], False
+                self.ready = __import__("threading").Event()
+                FakeTray.instances.append(self)
+
+            def start(self):
+                self.ready.set()
+
+            def set_state(self, *state):
+                self.states.append(state)
+
+            def stop(self):
+                self.stopped = True
+
+        saved = (tray.available, tray.WinTray)
+        tray.available, tray.WinTray = (lambda: True), FakeTray
+        try:
+            cfg = core.load_config()
+            cfg["tray"] = "tray"
+            w = Widget([], cfg)
+            try:
+                self.pump(w.root)
+                t = FakeTray.instances[-1]
+                self.assertEqual(w.root.state(), "withdrawn")        # icon-only mode starts hidden
+                self.assertFalse(t.widget_visible)
+                t.events.put("toggle")
+                w._poll_events()
+                self.pump(w.root)
+                self.assertTrue(w.visible)
+                self.assertNotEqual(w.root.state(), "withdrawn")
+                w.hide_widget()
+                core.instance_messages.put("show")                  # a second launch
+                w._poll_events()
+                self.assertTrue(w.visible)
+
+                w.providers = core.build_providers({"providers": [{"type": "claude", "name": "Claude"}]})
+                w.providers[0].snapshot = Snapshot(windows=[UsageWindow("Weekly", 93, time.time() + 3600, 604800)],
+                                                   fetched_at=time.time())
+                w.render(force=True)
+                tip, pct, rgb = t.states[-1]
+                self.assertEqual((tip, pct, rgb), ("SubUsage\nClaude: 93%", 93, (0xe4, 0x58, 0x58)))
+
+                w.hide_widget()
+                w.cfg["tray"] = "off"
+                w.apply_config(dict(w.cfg))                         # turning the tray off brings the widget back
+                self.assertTrue(t.stopped)
+                self.assertIsNone(w.tray)
+                self.assertTrue(w.visible)
+                w.hide_widget()                                     # no tray: refuses to hide
+                self.assertTrue(w.visible)
+            finally:
+                w.quit()
+        finally:
+            tray.available, tray.WinTray = saved
+
     def test_demo_compact(self):
         from subusage.providers.command import demo_providers
         from subusage.ui import Widget

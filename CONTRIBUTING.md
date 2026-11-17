@@ -29,6 +29,7 @@ subusage/
   update.py            version/build info, update check (GitHub Releases) and self-update
   history.py           local usage history (SQLite) + time-to-limit projections
   charts.py            hover tooltip mini chart and the History window
+  tray.py              Windows tray icon (ctypes + Shell_NotifyIcon) and its ring-icon renderer
   providers/
     __init__.py        registry (PROVIDERS) + catalog of not-yet-built-in subscriptions (CATALOG)
     claude.py, codex.py, copilot.py, gemini.py, cursor.py, jetbrains.py, nous.py

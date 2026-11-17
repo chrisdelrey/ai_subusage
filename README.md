@@ -42,6 +42,7 @@ Runs on **Windows, macOS and Ubuntu/Linux**. Pure Python standard library, no de
 - **Add / remove from a catalog:** pick from the built-in subscriptions, paste an API key for key-based plans, or plug in anything else with a custom command.
 - **Settings window:** a login-file field for each subscription with **Find…** (also searches WSL on Windows), **Browse…** and **Test**, plus one-click **Sign in with GitHub** for GitHub Copilot.
 - **Gentle on vendors:** polls every 5 minutes by default, backs off on rate limits (honoring `Retry-After`), and keeps showing the last good data while it waits.
+- **System tray (Windows):** a ring icon that fills with your tightest limit, a tooltip listing every subscription, and click-to-show. Keep just the icon and open the widget only when you want to track.
 - **Three views:** Full, Condensed (one tight row per limit) and Compact (one line per subscription). Plus opacity, always-on-top, and start at login on all three OSes.
 - **Built-in updates with release notes:** shows the version and build, checks GitHub daily, shows what's new, and updates in one click.
 
@@ -105,6 +106,7 @@ On Windows, use `python` instead of `python3`. You can also double-click **`subu
 | Action | How |
 |---|---|
 | Move it | Drag anywhere. The position is remembered. |
+| Hide it / bring it back (Windows) | Click **▁** in the footer or menu → **Hide to tray**. **Left-click the tray icon** to show it again. You can also launch SubUsage again (any OS), which brings the widget back. |
 | Menu | Right-click (macOS: Ctrl-click or two-finger click) |
 | Settings | Click **⚙** (bottom right) |
 | Refresh now | Click **⟳**, or use the menu. There's a 60-second floor so you can't trip vendor rate limits. |
@@ -165,6 +167,19 @@ Anything that can print a usage number can be a subscription. Write a script tha
 ```
 
 Then go to Settings → + Add subscription → **Custom** and enter the command (for example `python ~/bin/my_usage.py`). Start from [`examples/custom_provider.py`](examples/custom_provider.py).
+
+## System tray (Windows)
+
+SubUsage puts a small ring icon in the notification area. It fills clockwise with your **tightest** limit and turns green, amber or red at your thresholds. Hover it for one line per subscription (⚠ marks a limit on pace to run out).
+
+| Action | Result |
+|---|---|
+| Left-click | Show / hide the widget |
+| Right-click | Show/Hide widget · Refresh now · Settings… · Add subscription… · Quit |
+
+**Settings → System tray** has three choices: **Tray icon + widget** (the default on Windows); **Tray icon only**, which starts in the tray so you open the widget when you want to track; and **No tray icon**. Tip: if Windows hides the icon behind the **^** overflow arrow, drag it onto the taskbar, or turn it on under Settings → Personalization → Taskbar → Other system tray icons.
+
+macOS (menu bar) and Linux tray support would need native code per desktop. Contributions are welcome. On every OS, launching SubUsage again brings a hidden widget back.
 
 ## Start at login
 
@@ -267,7 +282,7 @@ python3 -m unittest discover -s tests -t .
 
 ## License and acknowledgements
 
-[MIT](LICENSE).
+Made by **Delrey Productions**. [MIT](LICENSE).
 
 - The **[CodexBar](https://github.com/steipete/CodexBar)** project (MIT, by Peter Steinberger) documents many of these usage endpoints. It was an invaluable reference.
 - **[Hermes Agent](https://github.com/NousResearch/hermes-agent)** (MIT, Nous Research) shows how Nous Portal usage is fetched.
