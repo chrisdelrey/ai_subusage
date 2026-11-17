@@ -173,6 +173,88 @@ class UiSmokeTests(HomeTestCase):
         finally:
             w.quit()
 
+    def test_refresh_updates_in_place(self):
+        """New data and ticking countdowns must not rebuild (that's what made the widget flash)."""
+        import tkinter
+        from subusage import core
+        from subusage.core import Snapshot, UsageWindow
+        from subusage.ui import Widget
+        for view in ("full", "condensed", "compact"):
+            cfg = core.load_config()
+            cfg["view"] = view
+            w = Widget([], cfg)
+            try:
+                w.providers = core.build_providers({"providers": [{"type": "claude", "name": "A"}]})
+                a = w.providers[0]
+                now = time.time()
+                a.snapshot = Snapshot(plan="Max", windows=[UsageWindow("Session (5h)", 20, now + 3600, 18000),
+                                                           UsageWindow("Weekly", 40, now + 86400, 604800)],
+                                      fetched_at=now)
+                w.render(force=True)
+                self.pump(w.root)
+                body, builds = w.body, w.rebuilds
+                before = [str(x) for x in w._all_widgets(body)]
+
+                a.snapshot = Snapshot(plan="Max", windows=[UsageWindow("Session (5h)", 55, now + 3000, 18000),
+                                                           UsageWindow("Weekly", 41, now + 86000, 604800)],
+                                      fetched_at=now + 300)
+                w._vals = None          # as if the 30 s tick rolled over
+                w.render()
+                self.pump(w.root)
+                self.assertEqual((w.rebuilds, w.body), (builds, body), view)
+                self.assertEqual([str(x) for x in w._all_widgets(w.body)], before, view)
+                if view == "condensed":
+                    canv = [c for c in w._all_widgets(w.body) if isinstance(c, tkinter.Canvas)]
+                    texts = [c.itemcget(i, "text") for c in canv for i in c.find_all() if c.type(i) == "text"]
+                else:
+                    texts = [x.cget("text") for x in w._all_widgets(w.body) if isinstance(x, tkinter.Label)]
+                self.assertTrue(any("55%" in t for t in texts), (view, texts))
+
+                w.hide_window(a, "Weekly")          # a real layout change still rebuilds
+                self.assertEqual(w.rebuilds, builds + 1)
+            finally:
+                w.quit()
+
+    def test_whats_new_after_upgrade(self):
+        from subusage import __version__, core, settings
+        from subusage.ui import Widget
+        shown = []
+        orig = settings.notes_dialog
+        settings.notes_dialog = lambda parent, title, text, footer="": shown.append((title, text, footer))
+        try:
+            cfg = core.load_config()
+            cfg["last_seen_version"] = __version__          # same version: nothing to show
+            w = Widget([], cfg)
+            w._whats_new()
+            self.assertEqual(shown, [])
+            w.cfg["pending_whats_new"] = {"from": "2.2.0", "to": __version__, "notes": "## x\n- fallback"}
+            w._whats_new()
+            self.pump(w.root)
+            self.assertEqual(len(shown), 1)
+            self.assertIn(__version__, shown[0][0])
+            self.assertIn("No more flashing", shown[0][1])   # read from the local CHANGELOG.md
+            self.assertEqual(shown[0][2], "Updated from 2.2.0")
+            saved = core.load_config()
+            self.assertEqual(saved["last_seen_version"], __version__)
+            self.assertNotIn("pending_whats_new", saved)
+            w.quit()
+        finally:
+            settings.notes_dialog = orig
+
+    def test_notes_dialog_renders(self):
+        import tkinter
+        from subusage.settings import notes_dialog
+        root = tkinter.Tk()
+        try:
+            top = notes_dialog(root, "What's new", "## 2.3.0\n- **Bold** item with `code`\n- plain")
+            self.pump(root)
+            text = [c for c in top.winfo_children()[0].winfo_children() if isinstance(c, tkinter.Text)][0]
+            body = text.get("1.0", "end")
+            self.assertIn("Version 2.3.0", body)
+            self.assertIn("•  Bold item with code", body)
+        finally:
+            root.destroy()
+
     def test_demo_compact(self):
         from subusage.providers.command import demo_providers
         from subusage.ui import Widget

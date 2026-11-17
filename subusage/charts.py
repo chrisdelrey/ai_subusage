@@ -47,19 +47,24 @@ class RowTooltip:
         self.after_id = None
         self.key = None
 
-    def bind(self, widgets: list[tk.Misc], provider, window: UsageWindow) -> None:
-        k = (id(provider), window.label)
+    def bind(self, widgets: list[tk.Misc], provider, label: str) -> None:
+        k = (id(provider), label)
         for wd in widgets:
-            wd.bind("<Enter>", lambda e, k=k: self._enter(e, k, provider, window), add="+")
+            wd.bind("<Enter>", lambda e, k=k: self._enter(e, k, provider, label), add="+")
             wd.bind("<Leave>", lambda e: self._leave(), add="+")
 
-    def _enter(self, e, k, provider, window) -> None:
+    def _enter(self, e, k, provider, label) -> None:
         if self.key == k and self.top is not None:
             self._cancel()
             return
         self.hide()
         self.key = k
-        self.after_id = self.w.root.after(450, lambda: self.show(e.x_root, e.y_root, provider, window))
+
+        def open_tip():
+            window = self.w.window_for(provider, label)  # latest data, not what was there at build time
+            if window is not None:
+                self.show(e.x_root, e.y_root, provider, window)
+        self.after_id = self.w.root.after(450, open_tip)
 
     def _leave(self) -> None:
         self._cancel()

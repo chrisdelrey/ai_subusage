@@ -63,6 +63,8 @@ def main(argv=None) -> int:
             print(f"Up to date (latest: {info.latest}).")
             return 0
         print(f"Update available: {info.latest}  {info.url}")
+        if info.notes:
+            print("\nWhat's new:\n" + info.notes.replace("**", "") + "\n")
         if args.update:
             try:
                 print(update.apply(info) + ". Restart the widget to use it.")

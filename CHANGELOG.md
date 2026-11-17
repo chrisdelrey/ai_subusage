@@ -1,5 +1,13 @@
 # Changelog
 
+Every release has notes here; the release workflow publishes them, and the widget shows them before
+you update ("What's new") and once after it restarts.
+
+## 2.3.0
+- **No more flashing on refresh:** the widget now builds its layout once and updates numbers, bars and countdowns in place. It only rebuilds when the layout itself changes (adding, hiding or collapsing something, switching views), and then swaps in the new layout in one step.
+- **Release notes with every update:** when an update is available, Settings → About & updates shows a preview and a **What's new** button with the notes for every version since yours. After updating, a **What's new** window appears once, also after updating with `git pull` or pip. `--check-update` prints the notes too.
+- Releases now require a CHANGELOG entry: the release workflow publishes that section as the GitHub release notes, and CI fails if the current version has none.
+
 ## 2.2.0
 - **Time to limit:** warns when a limit is on pace to run out before it resets ("⚠ At this pace: limit in ~47m"), using the burn rate over the last hour or the average since the window started. Shown inline (Full), in place of the countdown (Condensed), and as ⚠ (Compact/collapsed). Can be turned off.
 - **Usage history:** each check is stored locally in `history.db` (30-day retention, can be turned off or cleared). Hover any limit for details and a mini chart of the current window with its projection; right-click → History… for 24 h / 7 / 30 days.

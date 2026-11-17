@@ -39,6 +39,51 @@ def parse_version(s: str) -> tuple[int, ...]:
     return tuple(int(n) for n in nums[:3]) + (0,) * (3 - min(3, len(nums)))
 
 
+# --------------------------------------------------------------------------------------------------
+# Release notes (CHANGELOG.md: "## X.Y.Z" sections, newest first)
+# --------------------------------------------------------------------------------------------------
+
+def parse_changelog(text: str) -> list[tuple[str, str]]:
+    """[(version, body), ...] in file order."""
+    out: list[tuple[str, str]] = []
+    cur, buf = None, []
+    for line in (text or "").splitlines():
+        m = re.match(r"^##\s+\[?v?(\d+\.\d+(?:\.\d+)?)\]?", line)
+        if m:
+            if cur:
+                out.append((cur, "\n".join(buf).strip()))
+            cur, buf = m.group(1), []
+        elif cur:
+            buf.append(line)
+    if cur:
+        out.append((cur, "\n".join(buf).strip()))
+    return out
+
+
+def notes_between(text: str, after: str, upto: str) -> str:
+    """Notes for every version in (after, upto], newest first, each under its own heading."""
+    lo, hi = parse_version(after), parse_version(upto)
+    parts = [f"## {v}\n{body}" for v, body in parse_changelog(text) if lo < parse_version(v) <= hi and body]
+    return "\n\n".join(parts)
+
+
+def local_changelog() -> Optional[str]:
+    p = install_root() / "CHANGELOG.md"
+    try:
+        return p.read_text(encoding="utf-8") if p.exists() else None
+    except OSError:
+        return None
+
+
+def remote_changelog(ref: str, timeout: float = 15) -> Optional[str]:
+    try:
+        c = http_json(f"{API}/contents/CHANGELOG.md?ref={ref}", timeout=timeout)
+        return base64.b64decode(c.get("content") or "").decode("utf-8")
+    except Exception as e:  # notes are nice-to-have; never fail an update check over them
+        log(f"update: couldn't fetch CHANGELOG.md@{ref}: {e}")
+        return None
+
+
 def install_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
@@ -95,7 +140,17 @@ class UpdateInfo:
 
 
 def check(timeout: float = 15) -> UpdateInfo:
-    """Latest GitHub release; falls back to the version on main when the repo has no releases yet."""
+    """Latest GitHub release (or the version on main if there are no releases), with release notes for
+    every version between this one and the latest."""
+    info = _check_latest(timeout)
+    if info.available:
+        log_text = remote_changelog(info.ref, timeout)
+        notes = notes_between(log_text, info.current, info.latest) if log_text else ""
+        info.notes = notes or info.notes
+    return info
+
+
+def _check_latest(timeout: float) -> UpdateInfo:
     now = time.time()
     try:
         r = http_json(f"{API}/releases/latest", timeout=timeout)

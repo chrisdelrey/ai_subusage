@@ -137,6 +137,48 @@ def info_dialog(parent, title: str, text: str) -> None:
     top.bind("<Escape>", lambda _e: top.destroy())
 
 
+def notes_dialog(parent, title: str, text: str, footer: str = "") -> tk.Toplevel:
+    """Release notes, lightly formatted from the CHANGELOG's markdown."""
+    import re
+    top = tk.Toplevel(parent)
+    top.title(title)
+    top.configure(bg=THEME["bg"])
+    top.attributes("-topmost", True)
+    box = tk.Frame(top, bg=THEME["bg"], padx=16, pady=14)
+    box.pack(fill="both", expand=True)
+    lbl(box, title, THEME["fg"], 11, True).pack(anchor="w", pady=(0, 8))
+    lines = (text or "No release notes for this version.").strip().splitlines()
+    t = tk.Text(box, width=72, height=min(24, max(6, len(lines) + 4)), bg=THEME["panel"], fg=THEME["fg"],
+                relief="flat", font=(FONT, fsize(9)), padx=12, pady=10, wrap="word", spacing1=2, spacing3=2,
+                highlightthickness=0)
+    t.tag_configure("h", font=(FONT, fsize(10), "bold"), spacing1=8, foreground=THEME["primary_hover"])
+    t.tag_configure("b", font=(FONT, fsize(9), "bold"))
+    t.tag_configure("li", lmargin1=6, lmargin2=20)
+    for line in lines:
+        if line.startswith("#"):
+            t.insert("end", "Version " + line.lstrip("# ").strip() + "\n", "h")
+            continue
+        bullet = line.lstrip().startswith(("- ", "* "))
+        body = ("•  " + line.lstrip()[2:]) if bullet else line
+        for i, chunk in enumerate(re.split(r"\*\*(.+?)\*\*", body)):
+            t.insert("end", chunk.replace("`", ""), ("li", "b") if i % 2 and bullet else ("b",) if i % 2 else
+                     ("li",) if bullet else ())
+        t.insert("end", "\n")
+    t.configure(state="disabled")
+    sb = tk.Scrollbar(box, orient="vertical", command=t.yview)
+    t.configure(yscrollcommand=sb.set)
+    t.pack(side="top", fill="both", expand=True)
+    bar = tk.Frame(box, bg=THEME["bg"])
+    bar.pack(fill="x", pady=(10, 0))
+    if footer:
+        lbl(bar, footer, THEME["muted"], 8).pack(side="left")
+    button(bar, "Close", top.destroy, primary=True).pack(side="right")
+    top.bind("<Escape>", lambda _e: top.destroy())
+    top.update_idletasks()
+    top.geometry(f"+{max(0, parent.winfo_rootx() - 40)}+{max(0, parent.winfo_rooty() + 20)}")
+    return top
+
+
 # --------------------------------------------------------------------------------------------------
 # Settings window
 # --------------------------------------------------------------------------------------------------
@@ -258,10 +300,12 @@ class SettingsDialog:
         lbl(top, f"  ·  {kind}", THEME["muted"], 8).pack(side="left")
         button(top, "Repo", lambda: webbrowser.open(update.REPO_URL), subtle=True, small=True).pack(side="right")
         self.btn_update = button(top, "Update now", self._apply_update, primary=True, small=True)
+        self.btn_notes = button(top, "What's new", self._show_new_notes, small=True)
         button(top, "Check for updates", self._check_update, small=True).pack(side="right", padx=(0, 6))
         line = tk.Frame(box, bg=THEME["panel"])
         line.pack(fill="x", pady=(6, 0))
         self.v_updates = toggle(line, "Check automatically (daily)", self.cfg.get("check_updates", True), bg=THEME["panel"])
+        button(line, "Notes for this version", self._show_current_notes, subtle=True, small=True).pack(side="right")
         self.upd_status = lbl(box, "", THEME["muted"], 8, wraplength=600)
         self.upd_status.pack(anchor="w", pady=(4, 0))
         self._show_update_state()
@@ -269,10 +313,15 @@ class SettingsDialog:
     def _show_update_state(self) -> None:
         info, err = self.w.update_info, self.w.update_error
         self.btn_update.pack_forget()
+        self.btn_notes.pack_forget()
         if info and info.available:
-            self.upd_status.configure(text=f"Version {info.latest} is available (you have {info.current}). "
-                                           f"Notes: {info.url}", fg=THEME["warn"])
+            first = next((ln.strip("-* ").replace("**", "") for ln in info.notes.splitlines()
+                          if ln.strip().startswith(("-", "*"))), "")
+            self.upd_status.configure(text=f"Version {info.latest} is available (you have {info.current})."
+                                           + (f"  New: {first[:110]}{'…' if len(first) > 110 else ''}" if first else ""),
+                                      fg=THEME["warn"])
             self.btn_update.pack(side="right", padx=(0, 6))
+            self.btn_notes.pack(side="right", padx=(0, 6))
         elif info:
             ago = int((time.time() - info.checked_at) // 60)
             self.upd_status.configure(text=f"Up to date (latest {info.latest}, checked {ago} min ago).", fg=THEME["ok"])
@@ -284,6 +333,24 @@ class SettingsDialog:
     def _check_update(self) -> None:
         self.upd_status.configure(text="Checking GitHub…", fg=THEME["muted"])
         self.w.check_updates(on_done=lambda: self.alive() and self._show_update_state())
+
+    def _show_new_notes(self) -> None:
+        info = self.w.update_info
+        if info:
+            notes_dialog(self.top, f"What's new in {info.latest}", info.notes or f"See {info.url}",
+                         footer=f"You have {info.current}")
+
+    def _show_current_notes(self) -> None:
+        from . import __version__, update
+        text = update.local_changelog()
+        if text:
+            notes_dialog(self.top, f"SubUsage {__version__}", update.notes_between(text, "0", __version__)
+                         .split("\n## ")[0])
+            return
+        self._bg(lambda: update.remote_changelog(f"v{__version__}") or update.remote_changelog("main") or "",
+                 lambda t: notes_dialog(self.top, f"SubUsage {__version__}",
+                                        update.notes_between(t, "0", __version__).split("\n## ")[0]
+                                        if isinstance(t, str) else ""))
 
     def show_about(self) -> None:
         self.top.lift()
@@ -305,6 +372,8 @@ class SettingsDialog:
                 self.upd_status.configure(text=f"✗ Update failed: {res}", fg=THEME["err"])
                 return
             self.upd_status.configure(text=f"✓ {res}. Restarting…", fg=THEME["ok"])
+            # Shown once after the restart, even offline; also tells the new version what you came from.
+            self.w.cfg["pending_whats_new"] = {"from": info.current, "to": info.latest, "notes": info.notes}
 
             def restart():
                 try:

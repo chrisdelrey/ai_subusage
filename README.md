@@ -43,7 +43,7 @@ Runs on **Windows, macOS and Ubuntu/Linux**. Pure Python standard library, no de
 - **Settings window:** a login-file field for each subscription with **Find…** (also searches WSL on Windows), **Browse…** and **Test**, plus one-click **Sign in with GitHub** for Copilot.
 - **Gentle on vendors:** polls every 5 minutes by default, backs off on rate limits (honoring `Retry-After`), and keeps showing the last good data while it waits.
 - **Three views:** Full, Condensed (one tight row per limit) and Compact (one line per subscription). Plus opacity, always-on-top, and start at login on all three OSes.
-- **Built-in updates:** shows the version and build, checks GitHub daily, and updates in one click.
+- **Built-in updates with release notes:** shows the version and build, checks GitHub daily, shows what's new, and updates in one click.
 
 ## Supported subscriptions
 
@@ -187,7 +187,9 @@ The version and build show in **⚙ Settings → About & updates**. Build means 
 | pip / pipx | `pip install --upgrade git+https://github.com/chrisdelrey/ai_subusage.git@<tag>` |
 | Downloaded zip | Downloads the release zip from GitHub and replaces the program files. Your settings live elsewhere and are kept. |
 
-From a terminal: `python3 -m subusage --check-update` or `python3 -m subusage --update`.
+**Release notes come with every update.** Before you update, **What's new** shows the notes for every version since yours. After the restart, a **What's new** window appears once, including after a `git pull` or pip upgrade. All notes are in [CHANGELOG.md](CHANGELOG.md).
+
+From a terminal: `python3 -m subusage --check-update` (prints the notes) or `python3 -m subusage --update`.
 
 Updates are only installed when you click **Update now**. The daily check just looks at the GitHub Releases API (or the version on `main` if there are no releases yet).
 
