@@ -6,7 +6,7 @@ import json
 import sys
 import time
 
-from . import APP, __version__
+from . import APP, __version__  # noqa: F401
 from .core import IS_WIN, acquire_single_instance, build_providers, fmt_delta, load_config
 
 
@@ -44,8 +44,32 @@ def main(argv=None) -> int:
     ap.add_argument("--once", action="store_true", help="fetch once, print to the console, exit")
     ap.add_argument("--json", action="store_true", help="with --once: print JSON")
     ap.add_argument("--settings", action="store_true", help="open the Settings window on launch")
-    ap.add_argument("--version", action="version", version=f"{APP} {__version__}")
+    ap.add_argument("--check-update", action="store_true", help="check GitHub for a newer version, then exit")
+    ap.add_argument("--update", action="store_true", help="install the latest version from GitHub, then exit")
+    ap.add_argument("--version", action="store_true", help="print version and build, then exit")
     args = ap.parse_args(argv)
+
+    if args.version or args.check_update or args.update:
+        from . import update
+        print(f"{APP} {update.version_string()}  [{update.install_kind()}]")
+        if not (args.check_update or args.update):
+            return 0
+        try:
+            info = update.check()
+        except Exception as e:
+            print(f"Couldn't check for updates: {e}", file=sys.stderr)
+            return 1
+        if not info.available:
+            print(f"Up to date (latest: {info.latest}).")
+            return 0
+        print(f"Update available: {info.latest}  {info.url}")
+        if args.update:
+            try:
+                print(update.apply(info) + ". Restart the widget to use it.")
+            except Exception as e:
+                print(f"Update failed: {e}", file=sys.stderr)
+                return 1
+        return 0
 
     cfg = load_config()
     if args.demo:

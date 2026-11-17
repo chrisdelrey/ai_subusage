@@ -20,6 +20,7 @@ Runs on **Windows, macOS and Ubuntu/Linux**. Pure Python standard library, no de
 - [Using the widget](#using-the-widget)
 - [Adding and configuring subscriptions](#adding-and-configuring-subscriptions)
 - [Start at login](#start-at-login)
+- [Updating](#updating)
 - [Platform notes](#platform-notes)
 - [Privacy and security](#privacy-and-security)
 - [Command line](#command-line)
@@ -32,12 +33,17 @@ Runs on **Windows, macOS and Ubuntu/Linux**. Pure Python standard library, no de
 
 - **Every limit at a glance:** 5-hour sessions, weekly caps, daily model quotas, monthly credits, each with a reset countdown.
 - **Pace marker:** a white tick on each bar shows where you'd be if you used the window evenly. If the bar is past the tick, you're burning faster than the window allows.
+- **Time to limit:** when a limit is on pace to run out before it resets, SubUsage says so ("⚠ At this pace: limit in ~47m"). It uses your burn rate over the last hour, or the average since the window started.
+- **Usage history:** every check is saved locally (30 days). Hover a limit for a mini chart of the current window with its projection, or right-click → **History…** for the last 24 h / 7 / 30 days.
+- **Declutter:** hide limits you don't care about, collapse a subscription to one line (▾), and sort so whatever's closest to its limit is on top.
+- **Only shows what you're using:** if a tool's saved login has expired because you haven't used it lately (say, Hermes), that subscription is parked. It's hidden, and SubUsage stops asking the vendor about it. It comes back by itself the moment you use the tool again and its login refreshes.
 - **Color thresholds:** green, then amber (70%), then red (90%). Both thresholds are adjustable.
 - **Uses the logins you already have:** reads the sign-in saved by Claude Code, Codex CLI, Gemini CLI, the Cursor app, JetBrains IDEs, Hermes and more. There are no passwords to enter.
 - **Add / remove from a catalog:** pick from the built-in subscriptions, paste an API key for key-based plans, or plug in anything else with a custom command.
 - **Settings window:** a login-file field for each subscription with **Find…** (also searches WSL on Windows), **Browse…** and **Test**, plus one-click **Sign in with GitHub** for Copilot.
 - **Gentle on vendors:** polls every 5 minutes by default, backs off on rate limits (honoring `Retry-After`), and keeps showing the last good data while it waits.
-- **Compact mode, opacity and always-on-top**, plus start at login on all three OSes.
+- **Three views:** Full, Condensed (one tight row per limit) and Compact (one line per subscription). Plus opacity, always-on-top, and start at login on all three OSes.
+- **Built-in updates:** shows the version and build, checks GitHub daily, and updates in one click.
 
 ## Supported subscriptions
 
@@ -102,9 +108,19 @@ On Windows, use `python` instead of `python3`. You can also double-click **`subu
 | Settings | Click **⚙** (bottom right) |
 | Refresh now | Click **⟳**, or use the menu. There's a 60-second floor so you can't trip vendor rate limits. |
 | Open a vendor's usage page | Double-click the subscription's name |
-| Compact view | Menu → Compact: one line per subscription |
+| Details for one limit | Hover it: usage, reset, burn rate, projection, and this window's chart |
+| Hide a limit / see its history | Right-click the limit → **Hide "…"** / **History of "…"**. Unhide from the same menu or in Settings. |
+| Collapse a subscription | Click **▾** next to its name (one line, worst percentages only). Menu → **Expand all** to undo. |
+| Most urgent first | Menu → **Sort → Closest to limit first**. Limits on pace to run out come first, then the highest percentage. |
+| Change density | Menu → **View**: **Full** (bars + details), **Condensed** (one row per limit with a mini bar), **Compact** (one line per subscription) |
 
-Subscriptions without a login on this machine are hidden. To list them anyway, turn off "Hide subscriptions with no login" in Settings.
+<p align="center"><img src="docs/views.png" alt="Full, Condensed and Compact views" width="720"></p>
+<p align="center">
+  <img src="docs/tooltip.png" alt="Hover tooltip with burn rate, projection and chart" width="300">
+  <img src="docs/history.png" alt="History window" width="500">
+</p>
+
+Subscriptions without a login on this machine are hidden. So are subscriptions whose login has **expired** because you haven't used that tool lately. SubUsage watches the login file (a cheap local check, no network) and brings the subscription back as soon as the tool refreshes it. Settings → **Expired logins** can instead show them as one dim line, or show the error. **Refresh now** also retries them. To list them anyway, turn off "Hide subscriptions with no login" in Settings.
 
 ## Adding and configuring subscriptions
 
@@ -161,6 +177,20 @@ Right-click the widget → **Start at login**. What that does on each OS:
 
 It points at wherever SubUsage is installed. If you move the folder, untick and re-tick it. Only one copy of the widget runs at a time.
 
+## Updating
+
+The version and build show in **⚙ Settings → About & updates**. Build means the commit for a git checkout, or the release tag after an in-app update. SubUsage checks GitHub once a day, and you can turn that off. When a new release is out, a small **⬆ Update x.y.z** link appears in the widget's footer. Click it, then **Update now**. The widget updates itself the right way for how you installed it, then restarts:
+
+| Installed with | Update does |
+|---|---|
+| `git clone` | `git pull --ff-only` (refuses if you have local changes) |
+| pip / pipx | `pip install --upgrade git+https://github.com/chrisdelrey/ai_subusage.git@<tag>` |
+| Downloaded zip | Downloads the release zip from GitHub and replaces the program files. Your settings live elsewhere and are kept. |
+
+From a terminal: `python3 -m subusage --check-update` or `python3 -m subusage --update`.
+
+Updates are only installed when you click **Update now**. The daily check just looks at the GitHub Releases API (or the version on `main` if there are no releases yet).
+
 ## Platform notes
 
 **Windows**
@@ -182,6 +212,7 @@ It points at wherever SubUsage is installed. If you move the folder, untick and 
 - **It only reads logins, never writes them.** SubUsage reads tokens that your CLIs and apps already saved. It never refreshes them on disk, rewrites them, or changes their permissions, so it can't sign you out of anything. Gemini is the one exception to "never refreshes": its short-lived token is refreshed **in memory only**.
 - **It only talks to the vendors.** Each provider calls only its own vendor's usage endpoint. There's no telemetry, no analytics, and no third-party server.
 - **Secrets in the config file:** API keys and the Copilot token you add in Settings are stored in plain text in your config file. On macOS/Linux the file is `chmod 600`; on Windows it lives in your user-only `%APPDATA%`. To keep a key out of the file entirely, use `env:VAR_NAME`.
+- **History stays local:** usage samples go to `history.db` next to the config file and are pruned after 30 days. Turn history off or clear it in Settings.
 - **The source is small:** one file per provider under `subusage/providers/`. Read it before you run it.
 
 ## Command line
@@ -192,7 +223,9 @@ python3 -m subusage --once       fetch every subscription once, print, exit
 python3 -m subusage --once --json    same, as JSON (handy for scripts and bug reports)
 python3 -m subusage --demo       sample data, no logins
 python3 -m subusage --settings   start with the Settings window open
-python3 -m subusage --version
+python3 -m subusage --version        version, build and install type
+python3 -m subusage --check-update   is a newer version on GitHub?
+python3 -m subusage --update         install it (then restart the widget)
 ```
 
 ## Troubleshooting
@@ -200,12 +233,14 @@ python3 -m subusage --version
 | Symptom | Fix |
 |---|---|
 | A subscription doesn't appear | It has no login on this machine. Run `--once` to see why, or turn off "Hide subscriptions with no login". |
-| "Token expired; open … once" | The CLI's saved login is stale. Run that CLI once (`claude`, `codex`, `gemini`, `hermes`) and it refreshes. |
+| A subscription disappeared | Its login expired (you haven't used that tool lately). Use the tool once and it reappears. To see these, set Settings → Expired logins → Show dimmed. |
+| "Login expired; it refreshes the next time you use …" | Shown when Expired logins is set to "Show the error". Use that tool once (`claude`, `codex`, `gemini`, Hermes, Cursor). |
 | "Rate limited, retrying in …" | The vendor throttled its usage endpoint. Claude's is strict: keep its interval at 300 s or more. Old data stays visible. |
 | Copilot: "didn't accept the GitHub CLI token" | Use **Sign in with GitHub** in Settings instead of the `gh` fallback. |
 | Cursor: "token is encrypted" | Paste a cursor.com session token (see [macOS notes](#platform-notes)). |
 | JetBrains numbers look old | The IDE only saves its quota file now and then. Open the IDE to update it. |
 | `tkinter` missing | Ubuntu: `sudo apt install python3-tk`. Homebrew: `brew install python-tk`. |
+| Update failed: "local changes" | Your git checkout has edits. Commit or stash them, or run `git pull` yourself. |
 | Nothing happens on launch | Another copy is already running (one copy per user). Check the log: menu → Open log. |
 
 Logs are in the same folder as the config file (`widget.log`).

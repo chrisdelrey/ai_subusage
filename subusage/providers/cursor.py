@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-from ..core import (Field, HttpError, NotConfigured, Provider, ProviderError, Snapshot, UsageWindow,
+from ..core import (AuthExpired, Field, HttpError, NotConfigured, Provider, ProviderError, Snapshot, UsageWindow,
                     app_data_dirs, fnum, http_json, jwt_claims, parse_time, title_case)
 
 
@@ -60,6 +60,13 @@ class CursorProvider(Provider):
                 return p
         return app_data_dirs()[0] / "Cursor" / "User" / "globalStorage" / "state.vscdb"
 
+    def watch_paths(self) -> list[Path]:
+        paths = [Path.home() / ".config" / "cursor" / "auth.json"]
+        db = self.login_path()
+        if db:
+            paths = [db, db.with_name(db.name + "-wal")] + paths
+        return paths
+
     def _cookie(self) -> str:
         manual = self.setting("session_token")
         if manual:
@@ -92,7 +99,7 @@ class CursorProvider(Provider):
                 return f"WorkosCursorSessionToken={uid}%3A%3A{tok}"
         if any(t.startswith("cursor-safe-storage") for t in tokens):
             raise ProviderError("Cursor's token is encrypted on this machine; paste a session token in Settings")
-        raise ProviderError("Cursor session expired; open Cursor to sign in again")
+        raise AuthExpired("Cursor session expired; it refreshes the next time you open Cursor")
 
     def fetch(self) -> Snapshot:
         headers = {"Cookie": self._cookie(), "Origin": "https://cursor.com", "Referer": "https://cursor.com/dashboard"}
@@ -100,7 +107,7 @@ class CursorProvider(Provider):
             j = http_json("https://cursor.com/api/usage-summary", headers)
         except HttpError as e:
             if e.status in (401, 403):
-                raise ProviderError("Cursor rejected the session; open Cursor to sign in again") from None
+                raise AuthExpired("Cursor rejected the session; open Cursor to sign in again") from None
             raise
         return self.parse(j)
 

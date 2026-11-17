@@ -26,6 +26,9 @@ subusage/
   core.py              data model, Provider base class, http_json, config, scheduler, start-at-login
   ui.py                the widget (tkinter)
   settings.py          Settings window + "Add subscription" picker (generated from provider fields)
+  update.py            version/build info, update check (GitHub Releases) and self-update
+  history.py           local usage history (SQLite) + time-to-limit projections
+  charts.py            hover tooltip mini chart and the History window
   providers/
     __init__.py        registry (PROVIDERS) + catalog of not-yet-built-in subscriptions (CATALOG)
     claude.py, codex.py, copilot.py, gemini.py, cursor.py, jetbrains.py, nous.py
@@ -84,8 +87,9 @@ Key-based providers set `auth = "key"`, declare `Field("api_key", "API key", "se
 | Raise | When | Widget shows |
 |---|---|---|
 | `NotConfigured` | No login/key on this machine | Hidden (unless the user turns hiding off) |
+| `AuthExpired("…")` | The saved login exists but is expired/rejected | Parked: hidden, no network calls until `watch_signature()` changes (default: the login file's mtime). Override `watch_paths()`/`watch_signature()` if the login lives elsewhere; set `parks_on_auth = False` for API-key providers. |
 | `ProviderError("…")` | Something the user can fix: expired token, no subscription | Warning line, keeps last good data |
-| `HttpError` (from `http_json`) | Let it propagate | 429 → backoff with `Retry-After`; 401/403 → "sign in again" |
+| `HttpError` (from `http_json`) | Let it propagate | 429 → backoff with `Retry-After`; 401/403 → parked (or an error for key providers) |
 
 Any other exception is caught and logged, so one provider can never crash the widget.
 
@@ -128,6 +132,14 @@ python3 -m subusage --settings        # Add it, then Test from its row
 - [ ] Tested against a real account (say which plan/OS in the PR)
 - [ ] PROVIDERS.md + README table updated; `CATALOG` updated if applicable
 - [ ] No tokens, emails or account IDs in tests, screenshots or logs
+
+## Releasing (maintainers)
+
+1. Bump `__version__` in `subusage/__init__.py` (semver: provider fixes = patch, new providers/features = minor).
+2. Merge to `main`.
+3. Tag and push: `git tag v2.1.0 && git push origin v2.1.0`.
+
+The `release` workflow checks that the tag matches `__version__`, runs the tests, and publishes a GitHub Release with generated notes. Running widgets pick it up on their next daily check.
 
 ## Reporting a broken provider
 

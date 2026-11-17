@@ -103,6 +103,11 @@ class NotConfigured(ProviderError):
     """No login/key for this provider on this machine. The widget hides these by default."""
 
 
+class AuthExpired(ProviderError):
+    """The saved login exists but is expired or rejected (usually: the tool hasn't been used lately).
+    The provider is parked: no more network calls until its login changes."""
+
+
 class HttpError(Exception):
     def __init__(self, status: int, body: str, retry_after: Optional[float] = None):
         super().__init__(f"HTTP {status}")
@@ -331,6 +336,10 @@ class Field:
     default: str = ""
 
 
+# Called after every successful fetch with (provider, snapshot); the widget uses this to record history.
+FETCH_HOOKS: list[Callable[["Provider", "Snapshot"], None]] = []
+
+
 class Provider:
     """Subclass this to add a subscription. Implement fetch() and declare the class attributes."""
 
@@ -359,6 +368,11 @@ class Provider:
 
     fields: tuple[Field, ...] = ()
 
+    # --- parking (see AuthExpired)
+    parks_on_auth = True          # key-based providers set False: a bad key should stay visible
+    PARK_WATCH_S = 30             # how often to look for a changed login while parked (local files)
+    PARK_RETRY_S = 1800           # network retry while parked when there's nothing to watch
+
     def __init__(self, cfg: dict[str, Any]):
         self.cfg = cfg
         self.name = cfg.get("name") or self.default_name
@@ -371,6 +385,11 @@ class Provider:
         self.backoff = 0.0
         self.busy = False
         self.lock = threading.Lock()
+        self.parked = False
+        self.park_reason = ""
+        self._park_sig: Any = None
+        self._next_watch = 0.0
+        self._retry_at = 0.0
 
     # ----- settings access
     def setting(self, key: str, default: str = "") -> str:
@@ -409,6 +428,60 @@ class Provider:
     def fetch(self) -> Snapshot:  # pragma: no cover - abstract
         raise NotImplementedError
 
+    # ----- login watching (parking)
+    def watch_paths(self) -> list[Path]:
+        """Files whose change means the login was refreshed (the tool was used). Default: the login file."""
+        try:
+            p = self.login_path()
+        except Exception:
+            return []
+        return [p] if p else []
+
+    def watch_signature(self) -> Any:
+        """Cheap, local fingerprint of the login. None = nothing to watch (fall back to slow retries)."""
+        sig = []
+        for p in self.watch_paths():
+            try:
+                st = p.stat()
+                sig.append((str(p), st.st_mtime_ns, st.st_size))
+            except OSError:
+                sig.append((str(p), None, None))
+        return tuple(sig) or None
+
+    def _watch_interval(self) -> float:
+        paths = [str(p) for p in self.watch_paths()]
+        if any(x.startswith("\\\\wsl") or x.startswith("//wsl") for x in paths):
+            return float(self.poll)  # don't wake WSL more often than a normal poll would
+        return float(self.PARK_WATCH_S)
+
+    def park(self, reason: str) -> None:
+        now = time.time()
+        self.parked, self.park_reason = True, reason
+        try:
+            self._park_sig = self.watch_signature()
+        except Exception:
+            self._park_sig = None
+        self._next_watch = now + self._watch_interval()
+        self._retry_at = now + self.PARK_RETRY_S
+        log(f"{self.name}: parked ({reason})")
+
+    def check_unpark(self, now: Optional[float] = None) -> bool:
+        """Called by the scheduler while parked. True when it's time to try fetching again."""
+        now = now or time.time()
+        if now < self._next_watch:
+            return False
+        self._next_watch = now + self._watch_interval()
+        try:
+            sig = self.watch_signature()
+        except Exception:
+            sig = None
+        changed = sig is not None and sig != self._park_sig
+        if changed or (self._park_sig is None and now >= self._retry_at):
+            self.parked = False
+            log(f"{self.name}: login changed, un-parking" if changed else f"{self.name}: retrying parked login")
+            return True
+        return False
+
     def http_error_message(self, e: HttpError) -> str:
         if e.status in (401, 403):
             return "Login expired or rejected; sign in again with the vendor's app or CLI"
@@ -422,13 +495,25 @@ class Provider:
             snap.fetched_at = time.time()
             with self.lock:
                 self.snapshot, self.configured, self.backoff = snap, True, 0.0
+            self.parked, self.park_reason = False, ""
             self.next_at = time.time() + self.poll
+            for hook in list(FETCH_HOOKS):
+                try:
+                    hook(self, snap)
+                except Exception as e:  # a hook must never break fetching
+                    log(f"fetch hook failed: {e}")
+        except AuthExpired as e:
+            self._expired(str(e))
         except NotConfigured as e:
             with self.lock:
                 self.configured = False
                 self.snapshot = Snapshot(error=str(e))
             self.next_at = time.time() + max(self.poll, 600)
         except HttpError as e:
+            if e.status in (401, 403) and self.parks_on_auth:
+                log(f"{self.name}: HTTP {e.status} {e.body[:200]!r}")
+                self._expired(self.http_error_message(e))
+                return
             if e.status == 429:
                 self.backoff = min(max(self.backoff * 2, self.poll, e.retry_after or 0), 3600)
                 msg = f"Rate limited, retrying in {fmt_delta(self.backoff)}"
@@ -447,6 +532,14 @@ class Provider:
             self.next_at = time.time() + self.poll
         finally:
             self.busy = False
+
+    def _expired(self, msg: str) -> None:
+        if self.parks_on_auth:
+            self._keep_old(msg)
+            self.park(msg)
+        else:
+            self._keep_old(msg)
+            self.next_at = time.time() + self.poll
 
     def _keep_old(self, msg: str) -> None:
         with self.lock:
@@ -507,7 +600,12 @@ DEFAULT_PROVIDERS = ["claude", "codex", "copilot", "gemini", "cursor", "jetbrain
 DEFAULT_CONFIG: dict[str, Any] = {
     "providers": [],          # filled from DEFAULT_PROVIDERS on first run
     "always_on_top": True,
-    "compact": False,
+    "view": "full",             # full | condensed | compact
+    "sort": "manual",           # manual | tightest
+    "history": True,            # keep local usage history (enables projections and charts)
+    "projections": True,        # warn when a limit is on pace to run out before it resets
+    "expired_display": "hide",  # parked (expired-login) subscriptions: hide | dim | show
+    "check_updates": True,
     "opacity": 0.95,
     "width": 300,
     "warn_pct": 70,
@@ -582,7 +680,14 @@ class Scheduler(threading.Thread):
         while True:
             now = time.time()
             for p in list(self.providers):
-                if not p.busy and now >= p.next_at:
+                if p.busy:
+                    continue
+                if p.parked:
+                    if p.check_unpark(now):
+                        p.busy = True
+                        threading.Thread(target=p.run_fetch, daemon=True).start()
+                    continue
+                if now >= p.next_at:
                     p.busy = True
                     threading.Thread(target=p.run_fetch, daemon=True).start()
             self.wake.wait(5)
@@ -593,6 +698,8 @@ class Scheduler(threading.Thread):
         for p in self.providers:
             # A 60 s floor so mashing Refresh can't trip a vendor's 429 penalty box.
             p.next_at = min(p.next_at, max(now, p.last_attempt + 60))
+            if p.parked:  # Refresh is an explicit "try again" for parked logins too
+                p._next_watch, p._retry_at, p._park_sig = 0.0, 0.0, None
         self.wake.set()
 
 

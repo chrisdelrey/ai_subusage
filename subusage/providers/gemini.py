@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-from ..core import (IS_WIN, Field, HttpError, Provider, ProviderError, Snapshot, UsageWindow, fnum, http_json,
+from ..core import (IS_WIN, AuthExpired, Field, HttpError, Provider, ProviderError, Snapshot, UsageWindow, fnum, http_json,
                     log, parse_time, read_json_file, run_cmd, which)
 
 BASE = "https://cloudcode-pa.googleapis.com/v1internal"
@@ -84,7 +84,7 @@ class GeminiProvider(Provider):
         if not refresh:
             if token and not expiry:
                 return str(token)
-            raise ProviderError("Gemini login expired; run `gemini` once to refresh it")
+            raise AuthExpired("Login expired; it refreshes the next time you use Gemini CLI")
         cached = self._cache.get(refresh)
         if cached and cached[1] - 60 > time.time():
             return cached[0]
@@ -92,12 +92,17 @@ class GeminiProvider(Provider):
         if not client:
             raise ProviderError("Gemini token expired and Gemini CLI's OAuth client wasn't found; "
                                 "run `gemini` once, or set GEMINI_OAUTH_CLIENT_ID/SECRET")
-        r = http_json("https://oauth2.googleapis.com/token",
-                      form={"client_id": client[0], "client_secret": client[1],
-                            "refresh_token": refresh, "grant_type": "refresh_token"})
+        try:
+            r = http_json("https://oauth2.googleapis.com/token",
+                          form={"client_id": client[0], "client_secret": client[1],
+                                "refresh_token": refresh, "grant_type": "refresh_token"})
+        except HttpError as e:
+            if e.status in (400, 401):  # invalid_grant: refresh token revoked/expired
+                raise AuthExpired("Gemini sign-in expired; run `gemini` to sign in again") from None
+            raise
         new = r.get("access_token")
         if not new:
-            raise ProviderError("Google didn't refresh the Gemini token; run `gemini` to sign in again")
+            raise AuthExpired("Google didn't refresh the Gemini token; run `gemini` to sign in again")
         self._cache[refresh] = (new, time.time() + float(fnum(r.get("expires_in")) or 3000))
         return new
 

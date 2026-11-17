@@ -7,7 +7,7 @@ from __future__ import annotations
 import time
 from typing import Optional
 
-from ..core import (Field, HttpError, Provider, ProviderError, Snapshot, UsageWindow, fnum, http_json,
+from ..core import (AuthExpired, Field, HttpError, Provider, ProviderError, Snapshot, UsageWindow, fnum, http_json,
                     jwt_claims, parse_time, read_json_file, title_case)
 
 
@@ -55,7 +55,7 @@ class CodexProvider(Provider):
         except HttpError as e:
             exp = fnum(claims.get("exp"))
             if e.status == 401 and exp and exp < time.time():
-                raise ProviderError("Token expired; run `codex` once to refresh it") from None
+                raise AuthExpired("Login expired; it refreshes the next time you use Codex") from None
             raise
         snap = Snapshot(plan=title_case(j.get("plan_type") or auth_claims.get("chatgpt_plan_type")))
         rl = j.get("rate_limit") or {}
