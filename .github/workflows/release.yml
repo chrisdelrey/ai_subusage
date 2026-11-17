@@ -1,7 +1,8 @@
 name: release
 
-# Push a tag like v2.1.0 (matching subusage/__init__.py) to publish a GitHub Release.
-# The widget's updater installs the latest release.
+# Push a tag like v2.3.0 (matching subusage/__init__.py) to publish a GitHub Release.
+# The release notes are that version's section of CHANGELOG.md; a release without notes is refused.
+# The widget's updater installs the latest release and shows these notes before and after updating.
 on:
   push:
     tags: ["v*"]
@@ -23,7 +24,17 @@ jobs:
           [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "Tag ${GITHUB_REF_NAME} != v$v"; exit 1; }
       - name: Tests
         run: python -m unittest discover -s tests -t .
+      - name: Release notes from CHANGELOG.md
+        run: |
+          python - <<'PY'
+          import subusage, sys
+          from subusage.update import parse_changelog
+          notes = dict(parse_changelog(open("CHANGELOG.md", encoding="utf-8").read())).get(subusage.__version__, "")
+          if not notes.strip():
+              sys.exit(f"CHANGELOG.md has no notes for {subusage.__version__}")
+          open("release-notes.md", "w", encoding="utf-8").write(notes + "\n")
+          PY
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" --verify-tag --generate-notes --title "SubUsage ${GITHUB_REF_NAME}"
+        run: gh release create "${GITHUB_REF_NAME}" --verify-tag --title "SubUsage ${GITHUB_REF_NAME}" --notes-file release-notes.md

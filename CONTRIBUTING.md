@@ -136,10 +136,11 @@ python3 -m subusage --settings        # Add it, then Test from its row
 ## Releasing (maintainers)
 
 1. Bump `__version__` in `subusage/__init__.py` (semver: provider fixes = patch, new providers/features = minor).
-2. Merge to `main`.
-3. Tag and push: `git tag v2.1.0 && git push origin v2.1.0`.
+2. Add a `## X.Y.Z` section at the top of `CHANGELOG.md`, written for users. **Required:** CI fails without it, and so does the release.
+3. Merge to `main`.
+4. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 
-The `release` workflow checks that the tag matches `__version__`, runs the tests, and publishes a GitHub Release with generated notes. Running widgets pick it up on their next daily check.
+The `release` workflow checks that the tag matches `__version__`, runs the tests, and publishes a GitHub Release whose notes are that CHANGELOG section. Running widgets pick it up on their next daily check, show the notes under **What's new** before updating, and show them again once after restarting.
 
 ## Reporting a broken provider
 

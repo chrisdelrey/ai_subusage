@@ -69,7 +69,9 @@ class Widget:
         self.body = tk.Frame(self.root, bg=THEME["bg"], padx=12, pady=10)
         self.body.pack(fill="both", expand=True)
         self._drag = (0, 0)
-        self._last_sig: Any = None
+        self._struct: Any = None
+        self._vals: Any = None
+        self._updaters: list = []
         self._settings = None
         self._proj_cache: dict[tuple, Any] = {}
         self.update_info = None
@@ -87,6 +89,7 @@ class Widget:
         self._timers = {"tick": self.root.after(1000, self._tick)}
         if not demo:
             self._timers["update"] = self.root.after(15_000, self._auto_check)
+            self._timers["whatsnew"] = self.root.after(1500, self._whats_new)
 
     # ----- history / projections
     @staticmethod
@@ -324,6 +327,35 @@ class Widget:
         self.render(force=True)
 
     # ----- updates
+    def _whats_new(self) -> None:
+        """After an upgrade (in-app, git pull or pip), show that version's release notes once."""
+        from . import __version__, update
+        pending = self.cfg.pop("pending_whats_new", None)
+        last = self.cfg.get("last_seen_version")
+        self.cfg["last_seen_version"] = __version__
+        self._save()
+        since = (pending or {}).get("from") or last
+        if not since or update.parse_version(__version__) <= update.parse_version(since):
+            return  # first run, or no newer version: nothing to announce
+        notes = ""
+        local = update.local_changelog()
+        if local:
+            notes = update.notes_between(local, since, __version__)
+        if not notes and pending:
+            notes = pending.get("notes") or ""
+
+        def show(text):
+            if isinstance(text, str) and text.strip():
+                from .settings import notes_dialog
+                notes_dialog(self.root, f"What's new in SubUsage {__version__}", text,
+                             footer=f"Updated from {since}")
+        if notes:
+            show(notes)
+        else:  # pip installs don't ship CHANGELOG.md: fetch it for this version
+            from .core import bg
+            bg(lambda: update.notes_between(update.remote_changelog(f"v{__version__}") or "", since, __version__),
+               show, self.root.after)
+
     def _auto_check(self) -> None:
         if self.cfg.get("check_updates", True):
             self.check_updates()
@@ -338,42 +370,40 @@ class Widget:
             except Exception as e:  # offline, rate limited...
                 self.update_error = str(e)
                 log(f"update check failed: {e}")
-            self._last_sig = None  # re-render footer
+            self._struct = None  # rebuild so the footer shows/hides the update link
             if on_done:
                 self.root.after(0, on_done)
         threading.Thread(target=work, daemon=True).start()
 
     # ----- rendering
+    #
+    # The layout is built once and then updated in place (text, colors, bar lengths), so the widget never
+    # flashes on a refresh. It's rebuilt only when its *structure* changes (subscriptions added/removed,
+    # collapsed, a limit hidden, view switched...), and then the new layout is assembled off-screen first.
     def _tick(self) -> None:
         self.render()
         self._timers["tick"] = self.root.after(1000, self._tick)
 
-    def _signature(self):
-        parts: list[Any] = [int(time.time() // 60), view_of(self.cfg), self.width, self.cfg.get("sort"),
-                            self.cfg.get("expired_display"),
-                            bool(self.update_info and self.update_info.available)]
-        for p in self.providers:
-            with p.lock:
-                s = p.snapshot
-                parts.append((id(p), p.configured, p.parked, s.fetched_at, s.error, len(s.windows),
-                              bool(p.cfg.get("collapsed")), tuple(p.cfg.get("hidden") or ())))
-        return tuple(parts)
+    def _snap(self, p: Provider) -> Snapshot:
+        with p.lock:
+            return p.snapshot
+
+    def _win(self, p: Provider, label: str) -> Optional[UsageWindow]:
+        for w in self._snap(p).windows:
+            if w.label == label:
+                return w
+        return None
+
+    def window_for(self, p: Provider, label: str) -> Optional[UsageWindow]:
+        return self._win(p, label)
 
     def _tightness(self, p: Provider) -> tuple:
-        with p.lock:
-            snap = p.snapshot
+        snap = self._snap(p)
         wins = visible_windows(p, snap)
         risk = any((pr := self.projection(p, w, snap.fetched_at)) is not None and pr.at_risk for w in wins)
         return (not risk, -max((w.used_pct or 0) for w in wins) if wins else 0)
 
-    def render(self, force: bool = False) -> None:
-        sig = self._signature()
-        if not force and sig == self._last_sig:
-            return
-        self._last_sig = sig
-        self.tooltip.hide()
-        for c in self.body.winfo_children():
-            c.destroy()
+    def _visible(self) -> list[Provider]:
         expired = self.cfg.get("expired_display", "hide")
         visible = [p for p in self.providers
                    if (p.configured or not self.cfg.get("hide_unconfigured", True))
@@ -382,11 +412,62 @@ class Widget:
             visible.sort(key=self._tightness)
         if expired == "dim":
             visible.sort(key=lambda p: p.parked)  # stable: dimmed ones sink to the bottom
+        return visible
+
+    def _structure(self, visible: list[Provider]) -> tuple:
+        view, expired = view_of(self.cfg), self.cfg.get("expired_display", "hide")
+        parts: list[Any] = [view, self.width, expired, bool(self.update_info and self.update_info.available)]
+        for p in visible:
+            snap = self._snap(p)
+            wins = visible_windows(p, snap)
+            if p.parked and expired == "dim":
+                parts.append((id(p), "parked"))
+                continue
+            mode = "compact" if (p.cfg.get("collapsed") or view == "compact") else view
+            if mode == "full":
+                rows = tuple((w.label, bool(w.detail and w.resets_at),
+                              bool((pr := self.projection(p, w, snap.fetched_at)) and pr.at_risk)) for w in wins)
+            elif mode == "condensed":
+                rows = tuple(w.label for w in wins)
+            else:
+                rows = tuple(w.label for w in wins[:3] if w.used_pct is not None)
+            parts.append((id(p), mode, bool(p.cfg.get("collapsed")), snap.plan, rows, len(snap.notes),
+                          bool(snap.error)))
+        return tuple(parts)
+
+    def _values(self) -> tuple:
+        return (int(time.time() // 30),) + tuple(
+            (id(p), p.busy, s.fetched_at, s.error, tuple((w.label, w.used_pct, w.resets_at) for w in s.windows))
+            for p in self.providers for s in (self._snap(p),))
+
+    def render(self, force: bool = False) -> None:
+        visible = self._visible()
+        struct = self._structure(visible)
+        rebuilt = False
+        if force or struct != self._struct:
+            self._rebuild(visible)
+            self._struct, rebuilt = struct, True
+        vals = self._values()
+        if rebuilt or vals != self._vals:
+            self._vals = vals
+            for update in self._updaters:
+                try:
+                    update()
+                except tk.TclError:
+                    pass
+
+    def _rebuild(self, visible: list[Provider]) -> None:
+        self.rebuilds = getattr(self, "rebuilds", 0) + 1
+        self.tooltip.hide()
+        self._updaters = []
+        view = view_of(self.cfg)
+        old = self.body
+        self.body = tk.Frame(self.root, bg=THEME["bg"], padx=12 if view == "full" else 10,
+                             pady=10 if view == "full" else 7)
         if not visible:
             self._label(self.body, "No subscriptions found yet.\nClick ⚙ to add one or point the widget\n"
                         "at your Claude Code, Codex, Copilot… login.", THEME["muted"], 9).pack(anchor="w")
-        view = view_of(self.cfg)
-        self.body.configure(pady=10 if view == "full" else 7, padx=12 if view == "full" else 10)
+        expired = self.cfg.get("expired_display", "hide")
         draw = {"full": self._render_full, "condensed": self._render_condensed, "compact": self._render_compact}[view]
         for i, p in enumerate(visible):
             if i:
@@ -400,6 +481,9 @@ class Widget:
                 (self._render_compact if p.cfg.get("collapsed") else draw)(p)
         self._footer()
         self._bind_drag(self.body)
+        # Swap in one go: Tk only repaints when idle, so the user never sees an empty frame.
+        old.destroy()
+        self.body.pack(fill="both", expand=True)
 
     def _footer(self) -> None:
         foot = tk.Frame(self.body, bg=THEME["bg"])
@@ -424,6 +508,12 @@ class Widget:
         return tk.Label(parent, text=text, fg=color, bg=kw.pop("bg", THEME["bg"]), justify="left",
                         font=(FONT, fsize(size), "bold" if bold else "normal"), **kw)
 
+    @staticmethod
+    def _set(widget: tk.Label, **kw) -> None:
+        """configure() only what changed: avoids needless redraws."""
+        if any(widget.cget(k) != v for k, v in kw.items()):
+            widget.configure(**kw)
+
     def _color(self, pct: Optional[float]) -> str:
         if pct is None:
             return THEME["muted"]
@@ -442,7 +532,7 @@ class Widget:
         for ev in context_events():
             ch.bind(ev, lambda e: self._popup(e, (p, None)))
 
-    def _header(self, p: Provider, snap: Snapshot, size: int = 10):
+    def _header(self, p: Provider, snap: Snapshot, size: int = 10, plan: bool = True):
         row = tk.Frame(self.body, bg=THEME["bg"])
         row._ctx = (p, None)  # type: ignore[attr-defined]
         row.pack(fill="x")
@@ -451,7 +541,7 @@ class Widget:
         dot.create_oval(0, 0, 8, 8, fill=p.accent, width=0)
         dot.pack(side="left", padx=(0, 6))
         self._label(row, p.name, THEME["fg"], size, True).pack(side="left")
-        if snap.plan:
+        if plan and snap.plan:
             self._label(row, f"  {snap.plan}", THEME["muted"], size - 1).pack(side="left")
         row.bind("<Double-Button-1>", lambda _e: p.usage_url and webbrowser.open(p.usage_url))
         return row
@@ -464,12 +554,24 @@ class Widget:
             return "just now" if age < 60 else f"{fmt_delta(age)} ago"
         return ""
 
+    def _notes_and_error(self, p: Provider, snap: Snapshot, wrap: int) -> None:
+        for i in range(len(snap.notes)):
+            lab = self._label(self.body, "", THEME["muted"], 8)
+            lab.pack(anchor="w", pady=(3, 0))
+            self._updaters.append(lambda lab=lab, i=i: self._set(
+                lab, text=(self._snap(p).notes[i] if i < len(self._snap(p).notes) else "")))
+        if snap.error:
+            lab = self._label(self.body, "", THEME["err"], 8, wraplength=wrap)
+            lab.pack(anchor="w", pady=(4, 0))
+            self._updaters.append(lambda lab=lab: self._set(lab, text=f"⚠ {self._snap(p).error}"
+                                                              if self._snap(p).error else ""))
+
     def _render_full(self, p: Provider) -> None:
-        with p.lock:
-            snap = p.snapshot
+        snap = self._snap(p)
         head = self._header(p, snap)
-        self._label(head, self._status_text(p, snap), THEME["muted"], 8).pack(side="right")
-        now = time.time()
+        status = self._label(head, "", THEME["muted"], 8)
+        status.pack(side="right")
+        self._updaters.append(lambda: self._set(status, text=self._status_text(p, self._snap(p))))
         bar_w = self.width - 24
         for w in visible_windows(p, snap):
             group = tk.Frame(self.body, bg=THEME["bg"])
@@ -478,45 +580,66 @@ class Widget:
             line = tk.Frame(group, bg=THEME["bg"])
             line.pack(fill="x", pady=(5, 0))
             self._label(line, w.label, THEME["muted"], 9).pack(side="left")
-            if w.resets_at:
-                left = w.resets_at - now
-                self._label(line, f"  ↻ {fmt_delta(left)}" if left > 60 else "  resetting",
-                            THEME["muted"], 9).pack(side="right")
-            elif w.detail:
-                self._label(line, f"  {w.detail}", THEME["muted"], 9).pack(side="right")
-            if w.used_pct is not None:
-                self._label(line, f"{w.used_pct:.0f}%", self._color(w.used_pct), 9, True).pack(side="right")
+            right = self._label(line, "", THEME["muted"], 9)
+            right.pack(side="right")
+            pct = self._label(line, "", THEME["ok"], 9, True)
+            pct.pack(side="right")
             c = tk.Canvas(group, width=bar_w, height=6, bg=THEME["bg"], highlightthickness=0)
             c.pack(anchor="w", pady=(2, 0))
             c.create_rectangle(0, 0, bar_w, 6, fill=THEME["track"], width=0)
-            if w.used_pct is not None:
-                c.create_rectangle(0, 0, bar_w * max(0.0, min(1.0, w.used_pct / 100)), 6,
-                                   fill=self._color(w.used_pct), width=0)
-            # Pace marker: where you'd be if you used the window evenly until it resets.
-            if w.resets_at and w.length_s:
-                elapsed = 1 - (w.resets_at - now) / w.length_s
-                if 0 < elapsed < 1:
-                    x = int(bar_w * elapsed)
-                    c.create_rectangle(x - 1, 0, x + 1, 6, fill=THEME["pace"], width=0)
+            fill = c.create_rectangle(0, 0, 0, 6, fill=THEME["ok"], width=0)
+            pace = c.create_rectangle(0, 0, 0, 6, fill=THEME["pace"], width=0, state="hidden")
+            detail = warn = None
             if w.detail and w.resets_at:
-                self._label(group, w.detail, THEME["muted"], 8).pack(anchor="w")
+                detail = self._label(group, "", THEME["muted"], 8)
+                detail.pack(anchor="w")
             proj = self.projection(p, w, snap.fetched_at)
             if proj and proj.at_risk:
-                self._label(group, f"⚠ {proj.summary(now)}", THEME["warn"], 8).pack(anchor="w")
-            self.tooltip.bind(self._all_widgets(group), p, w)
-        for n in snap.notes:
-            self._label(self.body, n, THEME["muted"], 8).pack(anchor="w", pady=(3, 0))
-        if snap.error:
-            self._label(self.body, f"⚠ {snap.error}", THEME["err"], 8, wraplength=bar_w).pack(anchor="w", pady=(4, 0))
+                warn = self._label(group, "", THEME["warn"], 8)
+                warn.pack(anchor="w")
+
+            def update(label=w.label, right=right, pct=pct, c=c, fill=fill, pace=pace, detail=detail, warn=warn):
+                win = self._win(p, label)
+                if win is None:
+                    return
+                now = time.time()
+                if win.resets_at:
+                    left = win.resets_at - now
+                    self._set(right, text=f"  ↻ {fmt_delta(left)}" if left > 60 else "  resetting")
+                else:
+                    self._set(right, text=f"  {win.detail}" if win.detail else "")
+                color = self._color(win.used_pct)
+                if win.used_pct is not None:
+                    self._set(pct, text=f"{win.used_pct:.0f}%", fg=color)
+                    c.coords(fill, 0, 0, bar_w * max(0.0, min(1.0, win.used_pct / 100)), 6)
+                    c.itemconfigure(fill, fill=color)
+                else:
+                    self._set(pct, text="")
+                    c.coords(fill, 0, 0, 0, 6)
+                # Pace marker: where you'd be if you used the window evenly until it resets.
+                elapsed = 1 - (win.resets_at - now) / win.length_s if win.resets_at and win.length_s else -1
+                if 0 < elapsed < 1:
+                    x = int(bar_w * elapsed)
+                    c.coords(pace, x - 1, 0, x + 1, 6)
+                    c.itemconfigure(pace, state="normal")
+                else:
+                    c.itemconfigure(pace, state="hidden")
+                if detail is not None:
+                    self._set(detail, text=win.detail)
+                if warn is not None:
+                    pr = self.projection(p, win, self._snap(p).fetched_at)
+                    self._set(warn, text=f"⚠ {pr.summary(now)}" if pr and pr.at_risk else "")
+            self._updaters.append(update)
+            self.tooltip.bind(self._all_widgets(group), p, w.label)
+        self._notes_and_error(p, snap, bar_w)
 
     def _render_condensed(self, p: Provider) -> None:
         """One tight row per limit: label · mini bar · % · reset (or ⚠ time-to-limit)."""
-        with p.lock:
-            snap = p.snapshot
+        snap = self._snap(p)
         head = self._header(p, snap, size=9)
         if snap.error:
-            self._label(head, "⚠", THEME["err"], 9).pack(side="right")
-
+            err = self._label(head, "⚠", THEME["err"], 9)
+            err.pack(side="right")
         font_t, bold_t = (FONT, fsize(8)), (FONT, fsize(8), "bold")
         font = tkfont.Font(root=self.root, font=font_t)   # for measuring only
         bold = tkfont.Font(root=self.root, font=bold_t)
@@ -525,8 +648,8 @@ class Widget:
         label_w = int(W * 0.36)
         pct_w = bold.measure("100%") + 6
         reset_w = font.measure("↻ 22h 59m") + 2
-        bar_x0, bar_x1 = label_w, W - pct_w - reset_w - 6
-        now = time.time()
+        x0, x1 = label_w, W - pct_w - reset_w - 6
+        mid = row_h // 2
         for w in visible_windows(p, snap):
             c = tk.Canvas(self.body, width=W, height=row_h, bg=THEME["bg"], highlightthickness=0)
             c._ctx = (p, w.label)  # type: ignore[attr-defined]
@@ -534,52 +657,72 @@ class Widget:
             text = w.label
             while text and font.measure(text) > label_w - 6:
                 text = text[:-2] + "…" if len(text) > 2 else ""
-            mid = row_h // 2
             c.create_text(0, mid, text=text, anchor="w", fill=THEME["muted"], font=font_t)
-            c.create_rectangle(bar_x0, mid - 2, bar_x1, mid + 2, fill=THEME["track"], width=0)
-            color = self._color(w.used_pct)
-            if w.used_pct is not None:
-                c.create_rectangle(bar_x0, mid - 2, bar_x0 + (bar_x1 - bar_x0) * max(0.0, min(1.0, w.used_pct / 100)),
-                                   mid + 2, fill=color, width=0)
-                c.create_text(bar_x1 + 6 + pct_w - 4, mid, text=f"{w.used_pct:.0f}%", anchor="e", fill=color,
-                              font=bold_t)
-            if w.resets_at and w.length_s:
-                elapsed = 1 - (w.resets_at - now) / w.length_s
+            c.create_rectangle(x0, mid - 2, x1, mid + 2, fill=THEME["track"], width=0)
+            fill = c.create_rectangle(x0, mid - 2, x0, mid + 2, fill=THEME["ok"], width=0)
+            pace = c.create_rectangle(0, 0, 0, 0, fill=THEME["pace"], width=0, state="hidden")
+            pct = c.create_text(x1 + 6 + pct_w - 4, mid, text="", anchor="e", fill=THEME["ok"], font=bold_t)
+            right = c.create_text(W, mid, text="", anchor="e", fill=THEME["muted"], font=font_t)
+
+            def update(label=w.label, c=c, fill=fill, pace=pace, pct=pct, right=right):
+                win = self._win(p, label)
+                if win is None:
+                    return
+                now = time.time()
+                color = self._color(win.used_pct)
+                if win.used_pct is not None:
+                    c.coords(fill, x0, mid - 2, x0 + (x1 - x0) * max(0.0, min(1.0, win.used_pct / 100)), mid + 2)
+                    c.itemconfigure(fill, fill=color)
+                    c.itemconfigure(pct, text=f"{win.used_pct:.0f}%", fill=color)
+                else:
+                    c.coords(fill, x0, mid - 2, x0, mid + 2)
+                    c.itemconfigure(pct, text="")
+                elapsed = 1 - (win.resets_at - now) / win.length_s if win.resets_at and win.length_s else -1
                 if 0 < elapsed < 1:
-                    x = bar_x0 + int((bar_x1 - bar_x0) * elapsed)
-                    c.create_rectangle(x, mid - 3, x + 1, mid + 3, fill=THEME["pace"], width=0)
-            proj = self.projection(p, w, snap.fetched_at)
-            if proj and proj.at_risk and proj.hits_at:
-                c.create_text(W, mid, text=f"⚠ {fmt_delta(proj.hits_at - now)}", anchor="e", fill=THEME["warn"],
-                              font=font_t)
-            elif w.resets_at:
-                left = w.resets_at - now
-                c.create_text(W, mid, text=f"↻ {fmt_delta(left)}" if left > 60 else "now", anchor="e",
-                              fill=THEME["muted"], font=font_t)
-            self.tooltip.bind([c], p, w)
+                    x = x0 + int((x1 - x0) * elapsed)
+                    c.coords(pace, x, mid - 3, x + 1, mid + 3)
+                    c.itemconfigure(pace, state="normal")
+                else:
+                    c.itemconfigure(pace, state="hidden")
+                pr = self.projection(p, win, self._snap(p).fetched_at)
+                if pr and pr.at_risk and pr.hits_at:
+                    c.itemconfigure(right, text=f"⚠ {fmt_delta(pr.hits_at - now)}", fill=THEME["warn"])
+                elif win.resets_at:
+                    left = win.resets_at - now
+                    c.itemconfigure(right, text=f"↻ {fmt_delta(left)}" if left > 60 else "now", fill=THEME["muted"])
+                else:
+                    c.itemconfigure(right, text="")
+            self._updaters.append(update)
+            self.tooltip.bind([c], p, w.label)
         if snap.error:
-            self._label(self.body, snap.error, THEME["err"], 7, wraplength=W).pack(anchor="w")
+            lab = self._label(self.body, "", THEME["err"], 7, wraplength=W)
+            lab.pack(anchor="w")
+            self._updaters.append(lambda: self._set(lab, text=self._snap(p).error))
 
     def _render_compact(self, p: Provider) -> None:
         """One line: name + the first three percentages. Also used for collapsed subscriptions."""
-        with p.lock:
-            snap = p.snapshot
+        snap = self._snap(p)
         compact = view_of(self.cfg) == "compact"
-        row = self._header(p, snap, size=10 if compact else 9)
-        for child in row.pack_slaves()[3:]:
-            child.destroy()  # drop the plan; keep chevron, dot, name
+        size = 10 if compact else 9
+        row = self._header(p, snap, size=size, plan=False)
         nums = tk.Frame(row, bg=THEME["bg"])
         nums.pack(side="right")
-        for w in visible_windows(p, snap)[:3]:
-            if w.used_pct is not None:
-                proj = self.projection(p, w, snap.fetched_at)
-                lab = self._label(nums, f" {w.used_pct:.0f}%{'⚠' if proj and proj.at_risk else ''}",
-                                  self._color(w.used_pct), 10 if compact else 9, True)
-                lab.pack(side="left")
-                lab._ctx = (p, w.label)  # type: ignore[attr-defined]
-                self.tooltip.bind([lab], p, w)
+        for w in [w for w in visible_windows(p, snap)[:3] if w.used_pct is not None]:
+            lab = self._label(nums, "", THEME["ok"], size, True)
+            lab.pack(side="left")
+            lab._ctx = (p, w.label)  # type: ignore[attr-defined]
+
+            def update(label=w.label, lab=lab):
+                win = self._win(p, label)
+                if win is None or win.used_pct is None:
+                    return
+                pr = self.projection(p, win, self._snap(p).fetched_at)
+                self._set(lab, text=f" {win.used_pct:.0f}%{'⚠' if pr and pr.at_risk else ''}",
+                          fg=self._color(win.used_pct))
+            self._updaters.append(update)
+            self.tooltip.bind([lab], p, w.label)
         if snap.error:
-            self._label(nums, " ⚠", THEME["err"], 10).pack(side="left")
+            self._label(nums, " ⚠", THEME["err"], size).pack(side="left")
 
     def _render_parked(self, p: Provider) -> None:
         """One dim line for a subscription whose login expired; it comes back when the login is used."""
@@ -590,8 +733,7 @@ class Widget:
         dot.create_oval(0, 0, 8, 8, outline=THEME["muted"], width=1)
         dot.pack(side="left", padx=(0, 6))
         self._label(row, p.name, THEME["muted"], 9, True).pack(side="left")
-        lab = self._label(row, "sign-in expired · returns when used", THEME["muted"], 8)
-        lab.pack(side="right")
+        self._label(row, "sign-in expired · returns when used", THEME["muted"], 8).pack(side="right")
 
     @staticmethod
     def _all_widgets(w) -> list:

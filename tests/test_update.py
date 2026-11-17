@@ -25,14 +25,59 @@ class VersionTests(unittest.TestCase):
         self.assertTrue(update.version_string().startswith(__version__))
 
 
+LOG = """# Changelog
+
+intro text
+
+## 2.4.0
+- **Big** thing
+
+## 2.3.1
+- fix
+
+## [2.3.0] - 2026-11-17
+- older
+
+## 2.2.0
+- ancient
+"""
+
+
+class NotesTests(unittest.TestCase):
+    def test_parse_and_between(self):
+        self.assertEqual([v for v, _ in update.parse_changelog(LOG)], ["2.4.0", "2.3.1", "2.3.0", "2.2.0"])
+        notes = update.notes_between(LOG, "2.3.0", "2.4.0")
+        self.assertIn("## 2.4.0", notes)
+        self.assertIn("## 2.3.1", notes)
+        self.assertNotIn("older", notes)
+        self.assertEqual(update.notes_between(LOG, "2.4.0", "2.4.0"), "")
+
+    def test_every_version_has_notes(self):
+        """A version bump without a CHANGELOG entry fails CI (the release workflow refuses it too)."""
+        root = Path(__file__).resolve().parent.parent
+        notes = dict(update.parse_changelog((root / "CHANGELOG.md").read_text(encoding="utf-8")))
+        self.assertTrue(notes.get(__version__, "").strip(), f"CHANGELOG.md needs a '## {__version__}' section")
+
+
 class CheckTests(unittest.TestCase):
     def test_release(self):
-        http = FakeHTTP({"/releases/latest": {"tag_name": "v99.0.0", "html_url": "https://x/rel", "body": "notes",
-                                              "zipball_url": "https://api/zip/v99.0.0"}})
+        log = f"## 99.0.0\n- new stuff\n\n## 98.0.0\n- skipped release\n\n## {__version__}\n- yours\n"
+        http = FakeHTTP({"/releases/latest": {"tag_name": "v99.0.0", "html_url": "https://x/rel", "body": "body",
+                                              "zipball_url": "https://api/zip/v99.0.0"},
+                         "/contents/CHANGELOG.md?ref=v99.0.0": {"content": base64.b64encode(log.encode()).decode()}})
         with mock.patch.object(update, "http_json", http):
             info = update.check()
         self.assertTrue(info.available)
-        self.assertEqual((info.latest, info.ref, info.notes), ("99.0.0", "v99.0.0", "notes"))
+        self.assertEqual((info.latest, info.ref), ("99.0.0", "v99.0.0"))
+        self.assertIn("new stuff", info.notes)
+        self.assertIn("skipped release", info.notes)     # notes for every version since yours
+        self.assertNotIn("yours", info.notes)
+
+    def test_release_body_when_changelog_unavailable(self):
+        http = FakeHTTP({"/releases/latest": {"tag_name": "v99.0.0", "body": "from the release"},
+                         "/contents/CHANGELOG.md": HttpError(404, "")})
+        with mock.patch.object(update, "http_json", http):
+            self.assertEqual(update.check().notes, "from the release")
 
     def test_fallback_to_main(self):
         content = base64.b64encode(f'__version__ = "{__version__}"\n'.encode()).decode()
