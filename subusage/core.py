@@ -8,6 +8,7 @@ import base64
 import datetime as dt
 import json
 import os
+import queue
 import socket
 import subprocess
 import sys
@@ -605,6 +606,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "history": True,            # keep local usage history (enables projections and charts)
     "projections": True,        # warn when a limit is on pace to run out before it resets
     "expired_display": "hide",  # parked (expired-login) subscriptions: hide | dim | show
+    "tray": "both" if sys.platform == "win32" else "off",  # system tray: off | both | tray (icon only)
     "check_updates": True,
     "opacity": 0.95,
     "width": 300,
@@ -814,9 +816,44 @@ def open_path(p: Path) -> None:
 
 
 _instance_sock: Optional[socket.socket] = None
+INSTANCE_PORT = 47823
+# Messages from a second launch ("show"), drained by the widget on the UI thread.
+instance_messages: "queue.Queue[str]" = queue.Queue()
 
 
-def acquire_single_instance(port: int = 47823) -> bool:
+def start_instance_listener() -> None:
+    """Accept "show" from a second launch, so starting SubUsage again brings the widget back."""
+    sock = _instance_sock
+    if sock is None:
+        return
+
+    def serve():
+        while _instance_sock is sock:
+            try:
+                conn, _ = sock.accept()
+            except OSError:
+                return
+            with conn:
+                conn.settimeout(2)
+                try:
+                    msg = conn.recv(32).decode("ascii", "ignore").strip()
+                except OSError:
+                    continue
+                if msg in ("show", "quit"):
+                    instance_messages.put(msg)
+    threading.Thread(target=serve, daemon=True, name="SubUsageInstance").start()
+
+
+def signal_running_instance(msg: str = "show", port: int = INSTANCE_PORT) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=2) as s:
+            s.sendall(msg.encode("ascii"))
+        return True
+    except OSError:
+        return False
+
+
+def acquire_single_instance(port: int = INSTANCE_PORT) -> bool:
     """True if no other widget is running (holds a localhost port for the process lifetime)."""
     global _instance_sock
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

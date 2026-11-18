@@ -9,7 +9,7 @@ description = "Desktop widget for AI subscription usage limits (Claude, ChatGPT,
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
-authors = [{ name = "Chris Delrey" }]
+authors = [{ name = "Delrey Productions" }]
 keywords = ["claude", "chatgpt", "copilot", "gemini", "cursor", "usage", "widget", "rate limits", "subscription"]
 classifiers = [
     "Programming Language :: Python :: 3",

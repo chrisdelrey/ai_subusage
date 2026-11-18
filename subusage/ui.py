@@ -1,6 +1,7 @@
 """The floating widget (tkinter)."""
 from __future__ import annotations
 
+import queue
 import threading
 import time
 import tkinter as tk
@@ -9,7 +10,7 @@ import webbrowser
 from typing import Any, Optional
 
 from . import APP
-from .core import (FETCH_HOOKS, IS_MAC, IS_WIN, Provider, Scheduler, Snapshot, UsageWindow, build_providers,
+from .core import (FETCH_HOOKS, IS_MAC, IS_WIN, Provider, instance_messages, start_instance_listener, Scheduler, Snapshot, UsageWindow, build_providers,
                    config_path, fmt_delta, log, log_path, open_path, save_config, set_startup, startup_enabled)
 
 THEME = {
@@ -37,6 +38,7 @@ def context_events() -> tuple[str, ...]:
 VIEWS = (("full", "Full"), ("condensed", "Condensed"), ("compact", "Compact"))
 SORTS = (("manual", "As configured"), ("tightest", "Closest to limit first"))
 EXPIRED = (("hide", "Hide until used again"), ("dim", "Show dimmed"), ("show", "Show the error"))
+TRAY_MODES = (("off", "No tray icon"), ("both", "Tray icon + widget"), ("tray", "Tray icon only (open the widget from it)"))
 
 
 def view_of(cfg: dict[str, Any]) -> str:
@@ -77,6 +79,10 @@ class Widget:
         self.update_info = None
         self.update_error = ""
         self.tooltip = RowTooltip(self)
+        self.visible = True
+        self.tray = None
+        self._tray_events: "queue.Queue[str]" = queue.Queue()
+        self._tray_state: Any = None
         self._hook = self._make_fetch_hook(cfg)
         if not demo:
             FETCH_HOOKS.append(self._hook)
@@ -85,11 +91,95 @@ class Widget:
             self.root.bind(ev, lambda e: self._popup(e, None))
         self.render(force=True)
         self._place()
+        if not demo:
+            self._set_tray(self.cfg.get("tray", "off"))
+            if self.tray is not None and self.cfg.get("tray") == "tray":
+                self.hide_widget()  # icon-only mode starts in the tray
+            start_instance_listener()
         self.scheduler.start()
-        self._timers = {"tick": self.root.after(1000, self._tick)}
+        self._timers = {"tick": self.root.after(1000, self._tick), "events": self.root.after(150, self._poll_events)}
         if not demo:
             self._timers["update"] = self.root.after(15_000, self._auto_check)
             self._timers["whatsnew"] = self.root.after(1500, self._whats_new)
+
+    # ----- visibility & tray
+    def _set_tray(self, mode: str) -> None:
+        from . import tray
+        want = mode in ("both", "tray") and tray.available() and not self.demo
+        if want and self.tray is None:
+            self.tray = tray.WinTray(self._tray_events)
+            self.tray.widget_visible = self.visible
+            self.tray.start()
+            self.tray.ready.wait(3)
+            if not self.tray.ok:
+                log("tray: icon unavailable; keeping the widget visible")
+                self.tray.stop()
+                self.tray = None
+                self.show_widget()
+            else:
+                self._tray_state = None
+                self._update_tray()
+        elif not want and self.tray is not None:
+            self.tray.stop()
+            self.tray = None
+            self.show_widget()  # never leave the widget hidden with no way back
+
+    def hide_widget(self) -> None:
+        if self.tray is None:
+            return  # without a tray icon there'd be no way to bring it back
+        self.tooltip.hide()
+        self.root.withdraw()
+        self.visible = False
+        self.tray.widget_visible = False
+
+    def show_widget(self) -> None:
+        self.root.deiconify()
+        self.root.attributes("-topmost", bool(self.cfg.get("always_on_top", True)))
+        self.root.lift()
+        self.visible = True
+        if self.tray is not None:
+            self.tray.widget_visible = True
+        self._vals = None  # refresh numbers that changed while hidden
+
+    def toggle_widget(self) -> None:
+        self.hide_widget() if self.visible else self.show_widget()
+
+    def _poll_events(self) -> None:
+        for q in (self._tray_events, instance_messages):
+            while True:
+                try:
+                    ev = q.get_nowait()
+                except queue.Empty:
+                    break
+                {"toggle": self.toggle_widget, "show": self.show_widget, "refresh": self.scheduler.refresh_all,
+                 "settings": self.open_settings, "add": lambda: self.open_settings(picker=True),
+                 "quit": self.quit}.get(ev, lambda: None)()
+                if ev == "quit":
+                    return
+        self._timers["events"] = self.root.after(150, self._poll_events)
+
+    def _update_tray(self) -> None:
+        """Icon = tightest limit as a ring; tooltip = one line per subscription."""
+        if self.tray is None:
+            return
+        lines, worst = [], None
+        for p in self.providers:
+            if not p.configured or p.parked:
+                continue
+            wins = [w for w in visible_windows(p, self._snap(p)) if w.used_pct is not None]
+            if not wins:
+                continue
+            top = max(wins, key=lambda w: w.used_pct or 0)
+            risk = any((pr := self.projection(p, w, self._snap(p).fetched_at)) and pr.at_risk for w in wins)
+            lines.append(f"{p.name}: {top.used_pct:.0f}%{' ⚠' if risk else ''}")
+            worst = top.used_pct if worst is None else max(worst, top.used_pct)
+        from .tray import summary_tooltip
+        hexcol = self._color(worst).lstrip("#") if worst is not None else "969ca8"
+        rgb = tuple(int(hexcol[i:i + 2], 16) for i in (0, 2, 4))
+        state = (summary_tooltip(lines), worst, rgb)
+        if state != self._tray_state:
+            self._tray_state = state
+            self.tray.set_state(*state)
 
     # ----- history / projections
     @staticmethod
@@ -189,6 +279,8 @@ class Widget:
             m.grab_release()
 
     def _fill_menu(self, m: tk.Menu) -> None:
+        if self.tray is not None:
+            m.add_command(label="Hide to tray", command=self.hide_widget)
         m.add_command(label="Refresh now", command=self.scheduler.refresh_all)
         m.add_command(label="Settings…", command=self.open_settings)
         m.add_command(label="Add subscription…", command=lambda: self.open_settings(picker=True))
@@ -289,6 +381,9 @@ class Widget:
                 pass
         if self._hook in FETCH_HOOKS:
             FETCH_HOOKS.remove(self._hook)
+        if self.tray is not None:
+            self.tray.stop()
+            self.tray = None
         if not self.demo:
             self.cfg["x"], self.cfg["y"] = self.root.winfo_x(), self.root.winfo_y()
             save_config(self.cfg)
@@ -324,6 +419,7 @@ class Widget:
             self.scheduler.providers = self.providers
             self.scheduler.wake.set()
         self._proj_cache.clear()
+        self._set_tray(self.cfg.get("tray", "off"))
         self.render(force=True)
 
     # ----- updates
@@ -416,7 +512,8 @@ class Widget:
 
     def _structure(self, visible: list[Provider]) -> tuple:
         view, expired = view_of(self.cfg), self.cfg.get("expired_display", "hide")
-        parts: list[Any] = [view, self.width, expired, bool(self.update_info and self.update_info.available)]
+        parts: list[Any] = [view, self.width, expired, bool(self.update_info and self.update_info.available),
+                            self.tray is not None]
         for p in visible:
             snap = self._snap(p)
             wins = visible_windows(p, snap)
@@ -455,6 +552,7 @@ class Widget:
                     update()
                 except tk.TclError:
                     pass
+            self._update_tray()
 
     def _rebuild(self, visible: list[Provider]) -> None:
         self.rebuilds = getattr(self, "rebuilds", 0) + 1
@@ -495,7 +593,10 @@ class Widget:
             up._nodrag = True  # type: ignore[attr-defined]
             up.pack(side="left")
             up.bind("<Button-1>", lambda _e: self.open_settings(about=True))
-        for text, cmd in (("⚙", self.open_settings), ("⟳", self.scheduler.refresh_all)):
+        buttons = [("⚙", self.open_settings), ("⟳", self.scheduler.refresh_all)]
+        if self.tray is not None:
+            buttons.insert(0, ("▁", self.hide_widget))  # minimize to tray
+        for text, cmd in buttons:
             b = tk.Label(foot, text=text, fg=THEME["muted"], bg=THEME["bg"], font=(ICON_FONT, fsize(11)),
                          cursor="hand2")
             b._nodrag = True  # type: ignore[attr-defined]

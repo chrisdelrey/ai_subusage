@@ -6,7 +6,7 @@ import json
 import sys
 import time
 
-from . import APP, __version__  # noqa: F401
+from . import APP, AUTHOR, __version__  # noqa: F401
 from .core import IS_WIN, acquire_single_instance, build_providers, fmt_delta, load_config
 
 
@@ -39,7 +39,7 @@ def set_dpi_aware() -> None:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(prog="subusage", description=f"{APP} {__version__}: AI subscription usage widget")
+    ap = argparse.ArgumentParser(prog="subusage", description=f"{APP} {__version__}: AI subscription usage widget, by {AUTHOR}")
     ap.add_argument("--demo", action="store_true", help="show sample data, no logins needed")
     ap.add_argument("--once", action="store_true", help="fetch once, print to the console, exit")
     ap.add_argument("--json", action="store_true", help="with --once: print JSON")
@@ -51,7 +51,7 @@ def main(argv=None) -> int:
 
     if args.version or args.check_update or args.update:
         from . import update
-        print(f"{APP} {update.version_string()}  [{update.install_kind()}]")
+        print(f"{APP} {update.version_string()}  [{update.install_kind()}]  by {AUTHOR}")
         if not (args.check_update or args.update):
             return 0
         try:
@@ -92,7 +92,11 @@ def main(argv=None) -> int:
         return print_once(providers)
 
     if not args.demo and not acquire_single_instance():
-        print(f"{APP} is already running.", file=sys.stderr)
+        from .core import signal_running_instance
+        if signal_running_instance("show"):
+            print(f"{APP} is already running; showing its widget.", file=sys.stderr)
+        else:
+            print(f"{APP} is already running.", file=sys.stderr)
         return 0
     try:
         import tkinter  # noqa: F401
