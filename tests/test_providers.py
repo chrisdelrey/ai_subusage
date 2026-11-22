@@ -24,7 +24,7 @@ class RegistryTests(unittest.TestCase):
         for t, cls in PROVIDERS.items():
             self.assertEqual(t, cls.type)
             self.assertTrue(cls.default_name and cls.setup and cls.accent, t)
-            self.assertIn(cls.auth, ("auto", "key", "cookie", "command"), t)
+            self.assertIn(cls.auth, ("auto", "key", "cookie", "api", "command"), t)
             for f in cls.fields:
                 self.assertIn(f.kind, ("path", "secret", "text", "choice", "command", "device_login"), (t, f))
         names = {c.default_name.lower() for c in PROVIDERS.values()}

@@ -40,6 +40,7 @@ Runs on **Windows, macOS and Ubuntu/Linux**. Pure Python standard library, no de
 - **Only shows what you're using:** if a tool's saved login has expired because you haven't used it lately (say, Hermes), that subscription is parked. It's hidden, and SubUsage stops asking the vendor about it. It comes back by itself the moment you use the tool again and its login refreshes.
 - **Color thresholds:** green, then amber (70%), then red (90%). Both thresholds are adjustable.
 - **Uses the logins you already have:** reads the sign-in saved by Claude Code, Codex CLI, Gemini CLI, the Cursor app, JetBrains IDEs, Hermes and more. There are no passwords to enter.
+- **API usage too:** month-to-date spend or remaining credit for 14 pay-as-you-go APIs (OpenAI, Anthropic, OpenRouter, xAI, DeepSeek…). Paste just the key; every endpoint is pre-set, and each one has a **Get key ↗** button and step-by-step instructions.
 - **39 subscriptions built in, with search:** type in the picker to find one (Enter adds it), or filter your own list in Settings. Paste an API key for key-based plans, a browser session for website-only ones, or plug in anything else with a custom command.
 - **Settings window:** a login-file field for each subscription with **Find…** (also searches WSL on Windows), **Browse…** and **Test**, plus one-click **Sign in with GitHub** for GitHub Copilot.
 - **Gentle on vendors:** polls every 5 minutes by default, backs off on rate limits (honoring `Retry-After`), and keeps showing the last good data while it waits.
@@ -92,6 +93,25 @@ Runs on **Windows, macOS and Ubuntu/Linux**. Pure Python standard library, no de
 | **Manus** | Starter, Pro | Browser session | Monthly and daily credits |
 | **Ollama Cloud** | Free, Pro, Max | Browser session | Session / weekly / monthly usage |
 | **Custom** | anything | a command you write | whatever it prints |
+
+**API usage (pay as you go).** Paste the key; optionally set a budget to get a bar (see [API usage](#api-usage)).
+
+| API | Key you need | What it shows |
+|---|---|---|
+| **OpenAI API** | Admin key (`sk-admin-…`) | Spend this month (optionally one project) |
+| **Anthropic API** | Admin key (`sk-ant-admin…`) | Spend this month |
+| **OpenRouter** | API key | Credit balance, the key's limit, this month's spend on the key |
+| **xAI API** | Management key + Team ID | Prepaid credit |
+| **DeepSeek API** | API key | Balance |
+| **Moonshot API** (Kimi) | API key (global or China) | Balance |
+| **DeepInfra** | API key | Spend this month, credit or amount owed |
+| **Vercel AI Gateway** | AI Gateway key | Credit balance, used to date |
+| **SiliconFlow** | API key (international) | Balance |
+| **Venice API** | API key | Daily DIEM allocation, USD balance |
+| **fal** | Admin-scope key | Credit balance |
+| **ElevenLabs** | API key with User → Read | Monthly credits |
+| **Tavily** | API key | Monthly credits, per-key limit |
+| **Linkup** | API key | Credit balance |
 
 [PROVIDERS.md](PROVIDERS.md) has per-provider details (files read, endpoints, quirks), plus the two known subscriptions that aren't built in yet. Anything else can be added today with a [custom command](#custom-providers), and native support is welcome as a [contribution](CONTRIBUTING.md).
 
@@ -189,6 +209,17 @@ Each subscription's row in Settings has:
 | Windows | `%APPDATA%\SubUsageWidget\config.json` |
 | macOS | `~/Library/Application Support/SubUsage/config.json` |
 | Linux | `~/.config/subusage/config.json` |
+
+### API usage
+
+Add one from the picker's **API usage** group, then press **Get key ↗** in its row: it opens the exact page where that key is created, and the row's instructions say which kind of key it must be (OpenAI and Anthropic need an **Admin** key; normal keys can't read billing). Paste the key and press **Test**.
+
+Most billing APIs report a number, not a limit, so you can give SubUsage one:
+
+- **Monthly budget** (spend APIs like OpenAI, Anthropic, DeepInfra): this month's spend becomes a bar against it, resetting on the 1st (UTC). Your thresholds and the pace marker apply, so you'll see if you're on track to overshoot.
+- **Full balance** (prepaid APIs like OpenRouter, DeepSeek, fal): what you top up to; the bar shows how much of it you've used, so it turns red as the credit runs low.
+
+Leave it blank to just show the amount as a line. API usage is checked every 15 minutes by default.
 
 ### Browser sessions
 

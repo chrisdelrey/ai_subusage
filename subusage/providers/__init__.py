@@ -18,6 +18,9 @@ from .github import GitHubProvider
 from .jetbrains import JetBrainsProvider
 from .keyed import ClinePassProvider, KimiProvider, SyntheticProvider, ZaiProvider
 from .nous import NousProvider
+from .api import (AnthropicApiProvider, DeepInfraProvider, DeepSeekProvider, ElevenLabsProvider, FalProvider,
+                  LinkupProvider, MoonshotProvider, OpenAIApiProvider, OpenRouterProvider, SiliconFlowProvider,
+                  TavilyProvider, VeniceProvider, VercelGatewayProvider, XaiApiProvider)
 from .apikeys import (AlibabaProvider, AmpProvider, ChutesProvider, CodebuffProvider, FactoryProvider, GitKrakenProvider,
                       KiloProvider, MiniMaxProvider, OpenCodeGoProvider, PoeProvider, WarpProvider)
 from .local import (AmazonQProvider, AntigravityProvider, CodeRabbitProvider, GrokProvider, KiroProvider,
@@ -37,6 +40,10 @@ _ORDER: list[type[Provider]] = [
     # Browser session
     NotionProvider, MistralProvider, PerplexityProvider, AugmentProvider, DevinProvider, RaycastProvider,
     T3ChatProvider, ManusProvider, OllamaProvider,
+    # Pay-as-you-go API usage (spend / balance)
+    OpenAIApiProvider, AnthropicApiProvider, OpenRouterProvider, XaiApiProvider, DeepSeekProvider, MoonshotProvider,
+    DeepInfraProvider, VercelGatewayProvider, SiliconFlowProvider, VeniceProvider, FalProvider, ElevenLabsProvider,
+    TavilyProvider, LinkupProvider,
     CommandProvider,
 ]
 PROVIDERS: dict[str, type[Provider]] = {c.type: c for c in _ORDER}

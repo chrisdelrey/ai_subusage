@@ -20,6 +20,7 @@ from .providers.command import CUSTOM_HELP
 from .ui import EXPIRED, FONT, SORTS, THEME, TRAY_MODES, VIEWS, fsize, view_of
 
 AUTH_LABEL = {"auto": "Uses your existing login", "key": "Paste an API key", "cookie": "Paste a browser session",
+              "api": "API usage: paste an API key",
               "command": "Your own command"}
 
 COOKIE_HELP = """Some subscriptions only show usage on the vendor's website. For those, SubUsage uses your browser session.
@@ -478,6 +479,8 @@ class SettingsDialog:
         row["name"].pack(side="left")
         lbl(head, f"{cls.vendor} · {cls.plans}" if cls.vendor else cls.plans, THEME["muted"], 8).pack(side="left", padx=8)
         button(head, "Remove", lambda: self._remove(row), subtle=True, small=True).pack(side="right")
+        if getattr(cls, "key_url", ""):
+            button(head, "Get key ↗", lambda u=cls.key_url: webbrowser.open(u), subtle=True, small=True).pack(side="right")
         row["poll"] = entry(head, pc.get("poll_seconds", cls.default_poll), 5)
         lbl(head, "s", THEME["muted"]).pack(side="right")
         row["poll"].pack(side="right")
@@ -781,7 +784,8 @@ class SettingsDialog:
         added = {r["cls"].type for r in self.rows}
         q = getattr(self, "pick_query", "")
         groups = [("auto", "Detected from your existing logins"), ("key", "Paste an API key"),
-                  ("cookie", "Paste a browser session (usage only shown on the website)"), ("command", "Anything else")]
+                  ("cookie", "Paste a browser session (usage only shown on the website)"),
+                  ("api", "API usage: pay-as-you-go spend and credit (paste the key)"), ("command", "Anything else")]
         shown = 0
         for auth, title in groups:
             hits = [c for c in PROVIDERS.values() if c.auth == auth
@@ -852,4 +856,7 @@ class SettingsDialog:
             lbl(top, "✓ Added  ", THEME["ok"], 8).pack(side="right")
         else:
             button(top, "Add", lambda t=cls.type: self.add_provider(t), small=True).pack(side="right")
+        if getattr(cls, "key_url", ""):
+            button(top, "Get key ↗", lambda u=cls.key_url: webbrowser.open(u), subtle=True,
+                   small=True).pack(side="right", padx=(0, 6))
         lbl(r, cls.setup, THEME["muted"], 8, wraplength=560).pack(anchor="w", pady=(2, 0))

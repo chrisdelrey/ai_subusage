@@ -183,6 +183,29 @@ These read usage only the vendor's website shows. You paste the session (Cookie 
 | Manus | `session_id` (sent as a Bearer token) | `POST api.manus.im/user.v1.UserService/GetAvailableCredits` | Monthly and daily credits |
 | Ollama Cloud | all ollama.com cookies | `GET ollama.com/settings` (HTML) | Session/weekly/monthly usage |
 
+### API usage (pay as you go)
+
+All need just the key (env:VAR works). "Monthly budget" / "Full balance" are optional and only change how the number is shown.
+
+| API | Key | Request | Shows |
+|---|---|---|---|
+| OpenAI API | Admin key (`sk-admin-…`; Organization → Admin keys, Owners only) | `GET api.openai.com/v1/organization/costs?start_time=<1st of month>&bucket_width=1d` (paginated; optional `project_ids`) | Month-to-date spend |
+| Anthropic API | Admin key (`sk-ant-admin…`; Settings → Admin keys) | `GET api.anthropic.com/v1/organizations/cost_report?starting_at=…&ending_at=…` (`amount` is a decimal string in cents) | Month-to-date spend |
+| OpenRouter | API key | `GET openrouter.ai/api/v1/key` and `/api/v1/credits` | Key limit, credit balance, key spend this month |
+| xAI API | Management key + Team ID | `GET management-api.x.ai/v1/billing/teams/<team>/prepaid/balance` (credit is a negative `total.val` in cents) | Prepaid credit |
+| DeepSeek API | API key | `GET api.deepseek.com/user/balance` | Balance (USD entry preferred) |
+| Moonshot API | API key | `GET api.moonshot.ai/v1/users/me/balance` (or `.cn`, CNY) | Available balance, vouchers |
+| DeepInfra | API key | `GET api.deepinfra.com/payment/checklist?compute_owed=true` and `/payment/usage?from=current` (`total_cost` in cents) | Month spend, credit/owed |
+| Vercel AI Gateway | AI Gateway key | `GET ai-gateway.vercel.sh/v1/credits` | Balance, used to date |
+| SiliconFlow | API key | `GET api.siliconflow.com/v1/user/info` (the China balance API was retired) | Balance |
+| Venice API | API key | `GET api.venice.ai/api/v1/billing/balance` | Daily DIEM, USD balance |
+| fal | Admin-scope key (`Authorization: Key …`) | `GET api.fal.ai/v1/account/billing?expand=credits` | Credit balance |
+| ElevenLabs | API key with User → Read (`xi-api-key`) | `GET api.elevenlabs.io/v1/user/subscription` | Monthly credits |
+| Tavily | API key | `GET api.tavily.com/usage` | Monthly credits, key limit, pay-as-you-go |
+| Linkup | API key | `GET api.linkup.so/v1/credits/balance` | Balance |
+
+Not included because the vendor has no API that reports usage or balance for a normal key: Google Gemini API, Mistral API, Groq, Cohere, Perplexity API, Together AI.
+
 ## Not built in yet
 
 | Subscription | Vendor | Possible usage source |
