@@ -275,11 +275,17 @@ class UiSmokeTests(HomeTestCase):
             def set_state(self, *state):
                 self.states.append(state)
 
+            def set_menu_state(self, visible, paused, startup):
+                self.widget_visible, self.paused, self.startup = visible, paused, startup
+
             def stop(self):
                 self.stopped = True
 
-        saved = (tray.available, tray.WinTray)
-        tray.available, tray.WinTray = (lambda: True), FakeTray
+        saved = (tray.available, tray.create)
+        tray.available, tray.create = (lambda: True), FakeTray
+        from subusage.ui import tray_mode
+        self.assertEqual(tray_mode({"tray": "both", "background": True}), "tray")
+        self.assertEqual(tray_mode({"tray": "both"}), "both")
         try:
             cfg = core.load_config()
             cfg["tray"] = "tray"
@@ -306,6 +312,15 @@ class UiSmokeTests(HomeTestCase):
                 tip, pct, rgb = t.states[-1]
                 self.assertEqual((tip, pct, rgb), ("SubUsage\nClaude: 93%", 93, (0xe4, 0x58, 0x58)))
 
+                t.events.put("pause")                               # tray menu: Pause updates
+                w._poll_events()
+                self.assertTrue(w.paused and w.scheduler.paused and t.paused)
+                self.assertEqual(t.states[-1][0], "SubUsage\n⏸ updates paused\nClaude: 93%")
+                self.assertIsNone(t.states[-1][1])                  # grey ring while paused
+                core.instance_messages.put("start")                 # python -m subusage --resume
+                w._poll_events()
+                self.assertFalse(w.paused or w.scheduler.paused or t.paused)
+
                 w.hide_widget()
                 w.cfg["tray"] = "off"
                 w.apply_config(dict(w.cfg))                         # turning the tray off brings the widget back
@@ -317,7 +332,7 @@ class UiSmokeTests(HomeTestCase):
             finally:
                 w.quit()
         finally:
-            tray.available, tray.WinTray = saved
+            tray.available, tray.create = saved
 
     def test_demo_compact(self):
         from subusage.providers.command import demo_providers

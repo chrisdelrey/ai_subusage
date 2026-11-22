@@ -41,6 +41,11 @@ EXPIRED = (("hide", "Hide until used again"), ("dim", "Show dimmed"), ("show", "
 TRAY_MODES = (("off", "No tray icon"), ("both", "Tray icon + widget"), ("tray", "Tray icon only (open the widget from it)"))
 
 
+def tray_mode(cfg: dict[str, Any]) -> str:
+    """Background mode always means 'icon only, start hidden'."""
+    return "tray" if cfg.get("background") else cfg.get("tray", "off")
+
+
 def view_of(cfg: dict[str, Any]) -> str:
     v = cfg.get("view")
     if v in dict(VIEWS):
@@ -80,6 +85,7 @@ class Widget:
         self.update_error = ""
         self.tooltip = RowTooltip(self)
         self.visible = True
+        self.paused = False
         self.tray = None
         self._tray_events: "queue.Queue[str]" = queue.Queue()
         self._tray_state: Any = None
@@ -92,9 +98,9 @@ class Widget:
         self.render(force=True)
         self._place()
         if not demo:
-            self._set_tray(self.cfg.get("tray", "off"))
-            if self.tray is not None and self.cfg.get("tray") == "tray":
-                self.hide_widget()  # icon-only mode starts in the tray
+            self._set_tray(tray_mode(self.cfg))
+            if self.tray is not None and tray_mode(self.cfg) == "tray":
+                self.hide_widget()  # icon-only / background mode starts in the tray
             start_instance_listener()
         self.scheduler.start()
         self._timers = {"tick": self.root.after(1000, self._tick), "events": self.root.after(150, self._poll_events)}
@@ -105,10 +111,9 @@ class Widget:
     # ----- visibility & tray
     def _set_tray(self, mode: str) -> None:
         from . import tray
-        want = mode in ("both", "tray") and tray.available() and not self.demo
+        want = mode in ("both", "tray") and not self.demo and tray.available()
         if want and self.tray is None:
-            self.tray = tray.WinTray(self._tray_events)
-            self.tray.widget_visible = self.visible
+            self.tray = tray.create(self._tray_events)
             self.tray.start()
             self.tray.ready.wait(3)
             if not self.tray.ok:
@@ -118,6 +123,7 @@ class Widget:
                 self.show_widget()
             else:
                 self._tray_state = None
+                self._sync_tray_menu()
                 self._update_tray()
         elif not want and self.tray is not None:
             self.tray.stop()
@@ -130,19 +136,46 @@ class Widget:
         self.tooltip.hide()
         self.root.withdraw()
         self.visible = False
-        self.tray.widget_visible = False
+        self._sync_tray_menu()
 
     def show_widget(self) -> None:
         self.root.deiconify()
         self.root.attributes("-topmost", bool(self.cfg.get("always_on_top", True)))
         self.root.lift()
         self.visible = True
-        if self.tray is not None:
-            self.tray.widget_visible = True
+        self._sync_tray_menu()
         self._vals = None  # refresh numbers that changed while hidden
 
     def toggle_widget(self) -> None:
         self.hide_widget() if self.visible else self.show_widget()
+
+    def _sync_tray_menu(self) -> None:
+        if self.tray is not None:
+            try:
+                self.tray.set_menu_state(self.visible, self.paused, startup_enabled())
+            except Exception as e:
+                log(f"tray menu: {e!r}")
+
+    def set_paused(self, paused: bool) -> None:
+        """Stop or restart polling. The widget keeps showing the last numbers."""
+        self.paused = paused
+        self.scheduler.paused = paused
+        if not paused:
+            self.scheduler.refresh_all()
+        log("updates paused" if paused else "updates resumed")
+        self._sync_tray_menu()
+        self._tray_state = None
+        self.render(force=True)
+
+    def toggle_paused(self) -> None:
+        self.set_paused(not self.paused)
+
+    def toggle_startup_from_tray(self) -> None:
+        try:
+            set_startup(not startup_enabled())
+        except OSError as e:
+            log(f"start at login failed: {e}")
+        self._sync_tray_menu()
 
     def _poll_events(self) -> None:
         for q in (self._tray_events, instance_messages):
@@ -151,9 +184,11 @@ class Widget:
                     ev = q.get_nowait()
                 except queue.Empty:
                     break
-                {"toggle": self.toggle_widget, "show": self.show_widget, "refresh": self.scheduler.refresh_all,
-                 "settings": self.open_settings, "add": lambda: self.open_settings(picker=True),
-                 "quit": self.quit}.get(ev, lambda: None)()
+                {"toggle": self.toggle_widget, "show": self.show_widget, "hide": self.hide_widget,
+                 "refresh": self.scheduler.refresh_all, "pause": self.toggle_paused,
+                 "stop": lambda: self.set_paused(True), "start": lambda: self.set_paused(False),
+                 "startup": self.toggle_startup_from_tray, "settings": self.open_settings,
+                 "add": lambda: self.open_settings(picker=True), "quit": self.quit}.get(ev, lambda: None)()
                 if ev == "quit":
                     return
         self._timers["events"] = self.root.after(150, self._poll_events)
@@ -174,6 +209,9 @@ class Widget:
             lines.append(f"{p.name}: {top.used_pct:.0f}%{' ⚠' if risk else ''}")
             worst = top.used_pct if worst is None else max(worst, top.used_pct)
         from .tray import summary_tooltip
+        if self.paused:
+            lines.insert(0, "⏸ updates paused")
+            worst = None
         hexcol = self._color(worst).lstrip("#") if worst is not None else "969ca8"
         rgb = tuple(int(hexcol[i:i + 2], 16) for i in (0, 2, 4))
         state = (summary_tooltip(lines), worst, rgb)
@@ -281,7 +319,9 @@ class Widget:
     def _fill_menu(self, m: tk.Menu) -> None:
         if self.tray is not None:
             m.add_command(label="Hide to tray", command=self.hide_widget)
-        m.add_command(label="Refresh now", command=self.scheduler.refresh_all)
+        m.add_command(label="Refresh now", command=self.scheduler.refresh_all,
+                      state="disabled" if self.paused else "normal")
+        m.add_command(label="Resume updates" if self.paused else "Pause updates", command=self.toggle_paused)
         m.add_command(label="Settings…", command=self.open_settings)
         m.add_command(label="Add subscription…", command=lambda: self.open_settings(picker=True))
         m.add_separator()
@@ -372,6 +412,7 @@ class Widget:
         except OSError as e:
             self.v_startup.set(not self.v_startup.get())
             log(f"start at login failed: {e}")
+        self._sync_tray_menu()
 
     def quit(self) -> None:
         for t in self._timers.values():
@@ -419,7 +460,8 @@ class Widget:
             self.scheduler.providers = self.providers
             self.scheduler.wake.set()
         self._proj_cache.clear()
-        self._set_tray(self.cfg.get("tray", "off"))
+        self._set_tray(tray_mode(self.cfg))
+        self._sync_tray_menu()
         self.render(force=True)
 
     # ----- updates
@@ -513,7 +555,7 @@ class Widget:
     def _structure(self, visible: list[Provider]) -> tuple:
         view, expired = view_of(self.cfg), self.cfg.get("expired_display", "hide")
         parts: list[Any] = [view, self.width, expired, bool(self.update_info and self.update_info.available),
-                            self.tray is not None]
+                            self.tray is not None, self.paused]
         for p in visible:
             snap = self._snap(p)
             wins = visible_windows(p, snap)
@@ -593,6 +635,12 @@ class Widget:
             up._nodrag = True  # type: ignore[attr-defined]
             up.pack(side="left")
             up.bind("<Button-1>", lambda _e: self.open_settings(about=True))
+        if self.paused:
+            pz = tk.Label(foot, text="⏸ Paused · resume", fg=THEME["warn"], bg=THEME["bg"],
+                          font=(FONT, fsize(8), "bold"), cursor="hand2")
+            pz._nodrag = True  # type: ignore[attr-defined]
+            pz.pack(side="left", padx=(8 if info and info.available else 0, 0))
+            pz.bind("<Button-1>", lambda _e: self.set_paused(False))
         buttons = [("⚙", self.open_settings), ("⟳", self.scheduler.refresh_all)]
         if self.tray is not None:
             buttons.insert(0, ("▁", self.hide_widget))  # minimize to tray

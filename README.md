@@ -19,6 +19,7 @@ Runs on **Windows, macOS and Ubuntu/Linux**. Pure Python standard library, no de
 - [Install](#install)
 - [Using the widget](#using-the-widget)
 - [Adding and configuring subscriptions](#adding-and-configuring-subscriptions)
+- [System tray and background mode](#system-tray-and-background-mode)
 - [Start at login](#start-at-login)
 - [Updating](#updating)
 - [Platform notes](#platform-notes)
@@ -39,10 +40,11 @@ Runs on **Windows, macOS and Ubuntu/Linux**. Pure Python standard library, no de
 - **Only shows what you're using:** if a tool's saved login has expired because you haven't used it lately (say, Hermes), that subscription is parked. It's hidden, and SubUsage stops asking the vendor about it. It comes back by itself the moment you use the tool again and its login refreshes.
 - **Color thresholds:** green, then amber (70%), then red (90%). Both thresholds are adjustable.
 - **Uses the logins you already have:** reads the sign-in saved by Claude Code, Codex CLI, Gemini CLI, the Cursor app, JetBrains IDEs, Hermes and more. There are no passwords to enter.
-- **Add / remove from a catalog:** pick from the built-in subscriptions, paste an API key for key-based plans, or plug in anything else with a custom command.
+- **39 subscriptions built in, with search:** type in the picker to find one (Enter adds it), or filter your own list in Settings. Paste an API key for key-based plans, a browser session for website-only ones, or plug in anything else with a custom command.
 - **Settings window:** a login-file field for each subscription with **Find…** (also searches WSL on Windows), **Browse…** and **Test**, plus one-click **Sign in with GitHub** for GitHub Copilot.
 - **Gentle on vendors:** polls every 5 minutes by default, backs off on rate limits (honoring `Retry-After`), and keeps showing the last good data while it waits.
-- **System tray (Windows):** a ring icon that fills with your tightest limit, a tooltip listing every subscription, and click-to-show. Keep just the icon and open the widget only when you want to track.
+- **Tray / menu bar icon on all three OSes:** a ring that fills with your tightest limit, a tooltip listing every subscription, and a menu to show/hide the widget, pause/resume updates, refresh, and toggle start at login.
+- **Run in background:** one switch makes SubUsage start at login and live in the tray, with the widget hidden until you want it. Control it from the command line too (`--show`, `--hide`, `--pause`, `--resume`, `--quit`).
 - **Three views:** Full, Condensed (one tight row per limit) and Compact (one line per subscription). Plus opacity, always-on-top, and start at login on all three OSes.
 - **Built-in updates with release notes:** shows the version and build, checks GitHub daily, shows what's new, and updates in one click.
 
@@ -62,9 +64,38 @@ Runs on **Windows, macOS and Ubuntu/Linux**. Pure Python standard library, no de
 | **Kimi Code** (Moonshot) | Moderato, Allegretto, Allegro | API key | 5-hour, weekly, monthly |
 | **Synthetic** | Standard, Pro | API key | Weekly, search hourly |
 | **ClinePass** (Cline) | ClinePass | `cline auth` login or API key | 5-hour, weekly, monthly |
+| **Windsurf** (Cognition) | Free, Pro, Teams | Windsurf app's cached plan (read-only) | Daily, weekly quota (or prompt credits) |
+| **Kiro** (AWS) | Free, Pro, Pro+, Power | kiro-cli or Kiro IDE login | Monthly credits, bonus credits, overage |
+| **Amazon Q Developer** | Free, Pro | Amazon Q CLI login (`q login`) | Monthly limits |
+| **Antigravity** (Google) | Free, Pro, Ultra | The running app's local language server | Per-model quotas |
+| **Grok** (xAI) | SuperGrok, Heavy | Grok CLI login (`grok login`) | Monthly credits |
+| **Zed** | Free, Pro | Zed editor sign-in (macOS Keychain) or zed.dev session | Edit predictions, token spend |
+| **Factory Droid** | Pro, Max, Teams | `FACTORY_API_KEY` (or `~/.factory/.env`) | 5-hour, weekly, monthly |
+| **OpenCode Go** (SST) | Go | `opencode auth login` or API key | 5-hour, weekly, monthly |
+| **Kilo Pass** | Starter, Pro, Expert | `kilo auth login` or API key | Pass credits, balance |
+| **Codebuff** | Pro, Max | `codebuff login` or API key | Weekly limit, credits |
+| **Amp** (Sourcegraph) | Free, paid tiers | `amp` CLI login or access token | Amp Free, subscription, credits |
+| **CodeRabbit** | Lite, Pro | `coderabbit auth login` | Reviews this period |
+| **MiniMax** | Coding Plan | API key | 5-hour, weekly |
+| **Alibaba Coding Plan** (Qwen) | Lite, Pro | API key | 5-hour, weekly, monthly |
+| **Warp** | Free, Build, Business | API key | Monthly credits, bonus credits |
+| **GitKraken AI** | Pro, Advanced, Business | Personal access token | Weekly credits, org pool |
+| **Chutes** | Base, Plus, Pro | API key | Rolling 4-hour, monthly |
+| **Poe** (Quora) | Subscriber | API key | Points left (and % of your allowance) |
+| **Notion AI** | Business, Enterprise | Browser session (`token_v2`) | Standard / Select credits (or 6-hour + monthly) |
+| **Mistral** (Le Chat) | Pro, Team | Browser session (admin.mistral.ai) | Vibe and API budgets |
+| **Perplexity** | Pro, Max | Browser session | Monthly credits, balance |
+| **Augment Code** | Indie … Max | Browser session | Credits this billing cycle |
+| **Devin** (Cognition) | Core, Team | Browser request (token + org) | Daily, weekly |
+| **Raycast AI** | Pro, Pro+, Max | Browser session | Monthly AI credits |
+| **T3 Chat** | Pro | Browser session | 4-hour base, monthly overage |
+| **Manus** | Starter, Pro | Browser session | Monthly and daily credits |
+| **Ollama Cloud** | Free, Pro, Max | Browser session | Session / weekly / monthly usage |
 | **Custom** | anything | a command you write | whatever it prints |
 
-[PROVIDERS.md](PROVIDERS.md) has per-provider details (files read, endpoints, quirks). It also lists **28 more AI subscriptions** that aren't built in yet, such as Windsurf, Perplexity, Grok, Kiro and Warp. Those can be added today with a [custom command](#custom-providers), and native support is welcome as a [contribution](CONTRIBUTING.md).
+[PROVIDERS.md](PROVIDERS.md) has per-provider details (files read, endpoints, quirks), plus the two known subscriptions that aren't built in yet. Anything else can be added today with a [custom command](#custom-providers), and native support is welcome as a [contribution](CONTRIBUTING.md).
+
+The providers added in 2.6 were built against the vendors' documented response shapes (largely from CodexBar's research) and are marked **new**: if one shows an error with a login you know is good, please [open an issue](https://github.com/chrisdelrey/ai_subusage/issues) with the `--once --json` output, tokens removed.
 
 ## Install
 
@@ -106,7 +137,8 @@ On Windows, use `python` instead of `python3`. You can also double-click **`subu
 | Action | How |
 |---|---|
 | Move it | Drag anywhere. The position is remembered. |
-| Hide it / bring it back (Windows) | Click **▁** in the footer or menu → **Hide to tray**. **Left-click the tray icon** to show it again. You can also launch SubUsage again (any OS), which brings the widget back. |
+| Hide it / bring it back | Click **▁** in the footer or menu → **Hide to tray**. Click the tray icon (Windows/Linux: left-click; macOS: its menu → Show widget) to bring it back. Launching SubUsage again, or `python3 -m subusage --show`, also brings it back. |
+| Pause / resume updates | Tray icon menu or right-click menu → **Pause updates**. Nothing is fetched until you resume; the last numbers stay on screen. |
 | Menu | Right-click (macOS: Ctrl-click or two-finger click) |
 | Settings | Click **⚙** (bottom right) |
 | Refresh now | Click **⟳**, or use the menu. There's a 60-second floor so you can't trip vendor rate limits. |
@@ -131,8 +163,11 @@ Open **⚙ Settings → + Add subscription**. The picker groups everything by ho
 
 - **Detected from your existing logins:** add it, and if you're signed in to that vendor's CLI or app, it just works.
 - **Paste an API key:** add it, then paste the key in its Settings row.
+- **Paste a browser session:** for subscriptions whose usage is only on the vendor's website (Notion AI, Mistral, Perplexity…). See [Browser sessions](#browser-sessions).
 - **Anything else:** a custom command (see below).
 - **Not built in yet:** the rest of the catalog, with notes on where usage data could come from.
+
+Type in the **Search providers…** box to narrow the list (by name, vendor or plan); press **Enter** to add the only match. In Settings, **Filter subscriptions…** does the same for your own list.
 
 Each subscription's row in Settings has:
 
@@ -155,6 +190,17 @@ Each subscription's row in Settings has:
 | macOS | `~/Library/Application Support/SubUsage/config.json` |
 | Linux | `~/.config/subusage/config.json` |
 
+### Browser sessions
+
+Some vendors only show subscription usage on their website. For those, SubUsage uses your signed-in browser session, which you paste once:
+
+1. Sign in to the site and open its usage or settings page.
+2. Open developer tools (F12, or ⌥⌘I on a Mac) → **Network**, and reload.
+3. Right-click any request to that site → **Copy → Copy as cURL**.
+4. Paste it into the subscription's **Browser session** box and press **Test**.
+
+Pasting just the `Cookie` header, or only the cookie the provider names (for example Notion's `token_v2`), works too. SubUsage keeps only the cookies that vendor needs, sends them only to that vendor, and stores them like an API key (`env:VAR` works). Sessions expire now and then; when one does, the subscription says "session expired" and you paste a fresh one. SubUsage doesn't read your browser's cookie store: doing that safely across three OSes would need third-party crypto libraries.
+
 ### Custom providers
 
 Anything that can print a usage number can be a subscription. Write a script that prints JSON like this:
@@ -168,18 +214,21 @@ Anything that can print a usage number can be a subscription. Write a script tha
 
 Then go to Settings → + Add subscription → **Custom** and enter the command (for example `python ~/bin/my_usage.py`). Start from [`examples/custom_provider.py`](examples/custom_provider.py).
 
-## System tray (Windows)
+## System tray and background mode
 
-SubUsage puts a small ring icon in the notification area. It fills clockwise with your **tightest** limit and turns green, amber or red at your thresholds. Hover it for one line per subscription (⚠ marks a limit on pace to run out).
+SubUsage puts a small ring icon in the Windows notification area, the macOS menu bar, or the Linux tray. It fills clockwise with your **tightest** limit and turns green, amber or red at your thresholds. Hover it for one line per subscription (⚠ marks a limit on pace to run out). Its menu:
 
-| Action | Result |
-|---|---|
-| Left-click | Show / hide the widget |
-| Right-click | Show/Hide widget · Refresh now · Settings… · Add subscription… · Quit |
+**Show/Hide widget · Pause/Resume updates · Refresh now · Settings… · Add subscription… · Start at login ✓ · Quit**
 
-**Settings → System tray** has three choices: **Tray icon + widget** (the default on Windows); **Tray icon only**, which starts in the tray so you open the widget when you want to track; and **No tray icon**. Tip: if Windows hides the icon behind the **^** overflow arrow, drag it onto the taskbar, or turn it on under Settings → Personalization → Taskbar → Other system tray icons.
+On Windows and Linux, a left-click shows or hides the widget; on macOS, clicking opens the menu.
 
-macOS (menu bar) and Linux tray support would need native code per desktop. Contributions are welcome. On every OS, launching SubUsage again brings a hidden widget back.
+**Settings → System tray** (Menu bar icon on macOS) has three choices: **Tray icon + widget**, **Tray icon only** (starts in the tray; open the widget when you want to track), and **No tray icon**.
+
+**Settings → Run in background** is the "set and forget" option: SubUsage starts at login, shows only the icon, and the widget stays hidden until you open it. Turning it off also turns off start at login. It's a per-user background app rather than an OS service, because system services can't show a tray icon or windows.
+
+Linux needs a panel that supports StatusNotifierItem tray icons: KDE Plasma, Ubuntu (its GNOME has the AppIndicator extension), Cinnamon, XFCE, LXQt, Budgie, waybar and most others. On stock GNOME (Fedora, for example), install the "AppIndicator and KStatusNotifierItem Support" extension. Without a tray host, SubUsage keeps the widget visible and Settings explains why.
+
+On Windows, if the icon hides behind the **^** overflow arrow, drag it onto the taskbar, or turn it on under Settings → Personalization → Taskbar → Other system tray icons.
 
 ## Start at login
 
@@ -229,7 +278,7 @@ Updates are only installed when you click **Update now**. The daily check just l
 
 - **It only reads logins, never writes them.** SubUsage reads tokens that your CLIs and apps already saved. It never refreshes them on disk, rewrites them, or changes their permissions, so it can't sign you out of anything. Gemini is the one exception to "never refreshes": its short-lived token is refreshed **in memory only**.
 - **It only talks to the vendors.** Each provider calls only its own vendor's usage endpoint. There's no telemetry, no analytics, and no third-party server.
-- **Secrets in the config file:** API keys and GitHub tokens you add in Settings are stored in plain text in your config file. On macOS/Linux the file is `chmod 600`; on Windows it lives in your user-only `%APPDATA%`. To keep a key out of the file entirely, use `env:VAR_NAME`.
+- **Secrets in the config file:** API keys, browser sessions and GitHub tokens you add in Settings are stored in plain text in your config file. On macOS/Linux the file is `chmod 600`; on Windows it lives in your user-only `%APPDATA%`. To keep a key out of the file entirely, use `env:VAR_NAME`.
 - **History stays local:** usage samples go to `history.db` next to the config file and are pruned after 30 days. Turn history off or clear it in Settings.
 - **The source is small:** one file per provider under `subusage/providers/`. Read it before you run it.
 
@@ -244,6 +293,12 @@ python3 -m subusage --settings   start with the Settings window open
 python3 -m subusage --version        version, build and install type
 python3 -m subusage --check-update   is a newer version on GitHub?
 python3 -m subusage --update         install it (then restart the widget)
+python3 -m subusage --background     start with only the tray icon showing
+
+Control the running widget:
+python3 -m subusage --show | --hide | --toggle
+python3 -m subusage --pause | --resume       stop / restart polling
+python3 -m subusage --refresh | --quit
 ```
 
 ## Troubleshooting
@@ -284,7 +339,7 @@ python3 -m unittest discover -s tests -t .
 
 Made by **Delrey Productions**. [MIT](LICENSE).
 
-- The **[CodexBar](https://github.com/steipete/CodexBar)** project (MIT, by Peter Steinberger) documents many of these usage endpoints. It was an invaluable reference.
+- The **[CodexBar](https://github.com/steipete/CodexBar)** project (MIT, by Peter Steinberger) documents many of these usage endpoints, and its provider sources were the reference for most of the subscriptions added in 2.6. It was an invaluable reference.
 - **[Hermes Agent](https://github.com/NousResearch/hermes-agent)** (MIT, Nous Research) shows how Nous Portal usage is fetched.
 
-SubUsage is an independent project, not affiliated with or endorsed by Anthropic, OpenAI, GitHub, Google, Anysphere, JetBrains, Nous Research, Z.ai, Moonshot AI, Synthetic or Cline. All product names and trademarks belong to their owners.
+SubUsage is an independent project, not affiliated with or endorsed by any of the vendors whose subscriptions it tracks. All product names and trademarks belong to their owners.

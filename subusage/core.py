@@ -123,10 +123,31 @@ UA = f"{APP}/{__version__}"
 
 
 def http_json(url: str, headers: Optional[dict[str, str]] = None, *, method: str = "GET",
-              json_body: Any = None, form: Optional[dict[str, str]] = None, timeout: float = 15) -> Any:
+              json_body: Any = None, form: Optional[dict[str, str]] = None, timeout: float = 15,
+              local_tls: bool = False) -> Any:
     """Small JSON-over-HTTPS helper on top of urllib. Raises HttpError / ProviderError."""
+    raw = http_text(url, {"Accept": "application/json", **(headers or {})}, method=method, json_body=json_body,
+                    form=form, timeout=timeout, local_tls=local_tls)
+    try:
+        return json.loads(raw) if raw.strip() else {}
+    except ValueError:
+        raise ProviderError("Usage endpoint returned something that isn't JSON") from None
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):  # a cookie that's expired usually redirects to a login page
+        return None
+
+
+def http_text(url: str, headers: Optional[dict[str, str]] = None, *, method: str = "GET",
+              json_body: Any = None, form: Optional[dict[str, str]] = None, timeout: float = 15,
+              local_tls: bool = False, follow_redirects: bool = True) -> str:
+    """Like http_json but returns the body as text (HTML pages, JSON lines).
+
+    local_tls=True skips certificate checks, and is only honoured for 127.0.0.1 / localhost: some desktop
+    apps (Antigravity) serve their local API over HTTPS with a self-signed certificate."""
     data = None
-    hdrs = {"User-Agent": UA, "Accept": "application/json"}
+    hdrs = {"User-Agent": UA, "Accept": "*/*"}
     if json_body is not None:
         data = json.dumps(json_body).encode("utf-8")
         hdrs["Content-Type"] = "application/json"
@@ -137,10 +158,23 @@ def http_json(url: str, headers: Optional[dict[str, str]] = None, *, method: str
         method = "POST" if method == "GET" else method
     hdrs.update(headers or {})
     req = urllib.request.Request(url, data=data, headers=hdrs, method=method)
+    handlers: list[Any] = []
+    if local_tls:
+        host = (urllib.parse.urlsplit(url).hostname or "").lower()
+        if host not in ("127.0.0.1", "localhost", "::1"):
+            raise ProviderError("refusing to skip certificate checks for a non-local host")
+        import ssl
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        handlers.append(urllib.request.HTTPSHandler(context=ctx))
+        handlers.append(urllib.request.ProxyHandler({}))  # never send local traffic through a proxy
+    if not follow_redirects:
+        handlers.append(_NoRedirect())
+    opener = urllib.request.build_opener(*handlers) if handlers else None
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            raw = r.read().decode("utf-8")
-            return json.loads(raw) if raw.strip() else {}
+        with (opener.open(req, timeout=timeout) if opener else urllib.request.urlopen(req, timeout=timeout)) as r:
+            return r.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
         ra = e.headers.get("Retry-After") if e.headers else None
         try:
@@ -155,8 +189,8 @@ def http_json(url: str, headers: Optional[dict[str, str]] = None, *, method: str
         raise HttpError(e.code, body, retry_after) from None
     except urllib.error.URLError as e:
         raise ProviderError(f"Network error: {e.reason}") from None
-    except ValueError:
-        raise ProviderError("Usage endpoint returned something that isn't JSON") from None
+    except (OSError, ValueError) as e:  # timeouts, resets, bad URLs
+        raise ProviderError(f"Network error: {e}") from None
 
 
 def parse_time(v: Any) -> Optional[float]:
@@ -190,6 +224,111 @@ def parse_time(v: Any) -> Optional[float]:
             d = d.replace(tzinfo=dt.timezone.utc)
         return d.timestamp()
     return None
+
+
+BROWSER_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
+              "Chrome/143.0.0.0 Safari/537.36")
+
+
+def parse_cookie_input(raw: str) -> tuple[str, dict[str, str]]:
+    """Turn what a user pasted into (cookie_header, other_headers).
+
+    Accepts a bare cookie value, "name=value; other=value", "Cookie: ...", or a whole "Copy as cURL"
+    command from the browser's Network tab (any -H 'Cookie: ...', -b/--cookie, plus a few useful
+    request headers such as x-csrftoken). Never logs or returns anything but the request headers."""
+    import shlex
+    text = (raw or "").strip()
+    if not text:
+        return "", {}
+    if text.lower().startswith("curl ") or "\n" in text and "curl " in text.lower():
+        try:
+            parts = shlex.split(text.replace("\\\r\n", " ").replace("\\\n", " ").replace("^", ""), posix=True)
+        except ValueError:
+            parts = text.split()
+        cookie, extra = "", {}
+        keep = ("x-csrftoken", "x-csrf-token", "authorization", "x-cog-org-id", "x-notion-active-user-header",
+                "x-notion-space-id", "notion-client-version")
+        i = 0
+        while i < len(parts):
+            a = parts[i]
+            if a in ("-H", "--header") and i + 1 < len(parts):
+                name, _, value = parts[i + 1].partition(":")
+                if name.strip().lower() == "cookie":
+                    cookie = value.strip()
+                elif name.strip().lower() in keep:
+                    extra[name.strip()] = value.strip()
+                i += 2
+                continue
+            if a in ("-b", "--cookie") and i + 1 < len(parts):
+                cookie = parts[i + 1].strip()
+                i += 2
+                continue
+            i += 1
+        return cookie, extra
+    if text.lower().startswith("cookie:"):
+        text = text[7:].strip()
+    return text, {}
+
+
+def cookie_pairs(header: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for part in (header or "").split(";"):
+        name, sep, value = part.strip().partition("=")
+        if sep and name.strip():
+            out[name.strip()] = value.strip()
+    return out
+
+
+def pick_cookies(header: str, names: tuple[str, ...] = (), prefixes: tuple[str, ...] = (),
+                 bare_name: str = "") -> str:
+    """Keep only the cookies a vendor needs (so unrelated cookies never leave the machine).
+    A bare value (no "=") is treated as the value of bare_name."""
+    h = (header or "").strip()
+    if h and "=" not in h and bare_name:
+        return f"{bare_name}={h}"
+    pairs = cookie_pairs(h)
+    if not names and not prefixes:
+        return "; ".join(f"{k}={v}" for k, v in pairs.items())
+    kept = [f"{k}={v}" for k, v in pairs.items()
+            if k in names or any(k.startswith(p) for p in prefixes)]
+    return "; ".join(kept)
+
+
+def deep_find(obj: Any, pred: Callable[[dict[str, Any]], bool], depth: int = 8) -> Optional[dict[str, Any]]:
+    """First dict (depth-first) for which pred(dict) is true."""
+    if depth < 0:
+        return None
+    if isinstance(obj, dict):
+        try:
+            if pred(obj):
+                return obj
+        except Exception:
+            pass
+        children = obj.values()
+    elif isinstance(obj, list):
+        children = obj
+    else:
+        return None
+    for c in children:
+        hit = deep_find(c, pred, depth - 1)
+        if hit is not None:
+            return hit
+    return None
+
+
+def deep_get(obj: Any, *keys: str, depth: int = 8) -> Any:
+    """Value of the first key (in order of keys) found anywhere in a nested structure."""
+    for k in keys:
+        hit = deep_find(obj, lambda d, k=k: k in d and d[k] is not None, depth)
+        if hit is not None:
+            return hit[k]
+    return None
+
+
+def pct_of(used: Optional[float], limit: Optional[float]) -> Optional[float]:
+    if used is None or not limit or limit <= 0:
+        return None
+    return max(0.0, min(100.0, used / limit * 100))
 
 
 def jwt_claims(token: str) -> dict[str, Any]:
@@ -606,7 +745,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "history": True,            # keep local usage history (enables projections and charts)
     "projections": True,        # warn when a limit is on pace to run out before it resets
     "expired_display": "hide",  # parked (expired-login) subscriptions: hide | dim | show
-    "tray": "both" if sys.platform == "win32" else "off",  # system tray: off | both | tray (icon only)
+    "tray": "both" if sys.platform in ("win32", "darwin") else "off",  # system tray: off | both | tray (icon only)
+    "background": False,      # run in the background: start at login, icon only, widget starts hidden
     "check_updates": True,
     "opacity": 0.95,
     "width": 300,
@@ -694,9 +834,14 @@ class Scheduler(threading.Thread):
         super().__init__(daemon=True)
         self.providers = providers
         self.wake = threading.Event()
+        self.paused = False  # "Pause updates": no network calls until resumed
 
     def run(self) -> None:
         while True:
+            if self.paused:
+                self.wake.wait(5)
+                self.wake.clear()
+                continue
             now = time.time()
             for p in list(self.providers):
                 if p.busy:
@@ -817,6 +962,8 @@ def open_path(p: Path) -> None:
 
 _instance_sock: Optional[socket.socket] = None
 INSTANCE_PORT = 47823
+# What a second launch can ask the running widget to do (python -m subusage --show, --pause, ...).
+INSTANCE_COMMANDS = ("show", "hide", "toggle", "stop", "start", "refresh", "settings", "quit")
 # Messages from a second launch ("show"), drained by the widget on the UI thread.
 instance_messages: "queue.Queue[str]" = queue.Queue()
 
@@ -839,7 +986,7 @@ def start_instance_listener() -> None:
                     msg = conn.recv(32).decode("ascii", "ignore").strip()
                 except OSError:
                     continue
-                if msg in ("show", "quit"):
+                if msg in INSTANCE_COMMANDS:
                     instance_messages.put(msg)
     threading.Thread(target=serve, daemon=True, name="SubUsageInstance").start()
 
