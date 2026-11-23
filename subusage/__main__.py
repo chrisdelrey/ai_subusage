@@ -1,4 +1,4 @@
-"""Entry point: python -m subusage [--demo | --once [--json] | --settings]"""
+"""Entry point: python -m subusage [--demo | --once [--json] | --settings | --background | --show/--hide/--pause/...]"""
 from __future__ import annotations
 
 import argparse
@@ -47,7 +47,22 @@ def main(argv=None) -> int:
     ap.add_argument("--check-update", action="store_true", help="check GitHub for a newer version, then exit")
     ap.add_argument("--update", action="store_true", help="install the latest version from GitHub, then exit")
     ap.add_argument("--version", action="store_true", help="print version and build, then exit")
+    ap.add_argument("--background", action="store_true", help="start hidden, with only the tray icon showing")
+    ctl = ap.add_argument_group("control the running widget")
+    for flag, msg, text in (("show", "show", "show the widget"), ("hide", "hide", "hide the widget to the tray"),
+                            ("toggle", "toggle", "show or hide the widget"),
+                            ("pause", "stop", "pause updates (no network calls)"), ("resume", "start", "resume updates"),
+                            ("refresh", "refresh", "refresh now"), ("quit", "quit", "quit the widget")):
+        ctl.add_argument(f"--{flag}", dest="control", action="store_const", const=msg, help=text)
     args = ap.parse_args(argv)
+
+    if args.control:
+        from .core import signal_running_instance
+        if signal_running_instance(args.control):
+            return 0
+        if args.control != "show":
+            print(f"{APP} isn't running.", file=sys.stderr)
+            return 1
 
     if args.version or args.check_update or args.update:
         from . import update
@@ -107,6 +122,8 @@ def main(argv=None) -> int:
     set_dpi_aware()
     from .ui import Widget
     w = Widget(providers, cfg, demo=args.demo)
+    if args.background:
+        w.hide_widget()  # no-op without a tray icon: there'd be no way to bring it back
     if args.settings:
         w.root.after(300, w.open_settings)
     w.run()

@@ -19,7 +19,62 @@ from .providers import CATALOG, PROVIDERS
 from .providers.command import CUSTOM_HELP
 from .ui import EXPIRED, FONT, SORTS, THEME, TRAY_MODES, VIEWS, fsize, view_of
 
-AUTH_LABEL = {"auto": "Uses your existing login", "key": "Paste an API key", "command": "Your own command"}
+AUTH_LABEL = {"auto": "Uses your existing login", "key": "Paste an API key", "cookie": "Paste a browser session",
+              "api": "API usage: paste an API key",
+              "command": "Your own command"}
+
+COOKIE_HELP = """Some subscriptions only show usage on the vendor's website. For those, SubUsage uses your browser session.
+
+1. Sign in to the site in your browser and open its usage or settings page.
+2. Open the developer tools (F12, or ⌥⌘I on a Mac) and go to the Network tab.
+3. Reload the page, right-click any request to that site, and choose Copy → Copy as cURL.
+4. Paste it into the provider's "Browser session" box and press Test.
+
+You can also paste just the Cookie header, or only the one cookie the provider names.
+
+SubUsage keeps only the cookies that provider needs, sends them only to that vendor, and stores them in your
+config file (like API keys; env:VAR works too). Sessions expire now and then: when one does, the subscription
+shows "session expired" and you paste a fresh one. Signing out of the site in your browser also ends it."""
+
+
+def matches(query: str, *texts: str) -> bool:
+    """Every word of the query appears somewhere in the texts (case-insensitive)."""
+    hay = " ".join(t for t in texts if t).lower()
+    return all(w in hay for w in query.lower().split())
+
+
+def search_entry(parent, on_change, placeholder: str = "Search…", width: int = 28) -> tk.Entry:
+    """An entry with a placeholder that calls on_change(query) as you type. Esc clears it."""
+    e = entry(parent, "", width)
+    state = {"empty": True}
+
+    def show_placeholder():
+        if not e.get():
+            state["empty"] = True
+            e.insert(0, placeholder)
+            e.configure(fg=THEME["muted"])
+
+    def focus_in(_e):
+        if state["empty"]:
+            e.delete(0, "end")
+            e.configure(fg=THEME["fg"])
+            state["empty"] = False
+
+    def changed(_e=None):
+        if not state["empty"]:
+            on_change(e.get().strip())
+
+    def clear(_e):
+        e.delete(0, "end")
+        on_change("")
+        return "break"
+    e.bind("<FocusIn>", focus_in)
+    e.bind("<FocusOut>", lambda _e: show_placeholder())
+    e.bind("<KeyRelease>", changed)
+    e.bind("<Escape>", clear)
+    e.query = lambda: "" if state["empty"] else e.get().strip()  # type: ignore[attr-defined]
+    show_placeholder()
+    return e
 
 
 # --------------------------------------------------------------------------------------------------
@@ -203,6 +258,10 @@ class SettingsDialog:
         head.pack(fill="x", pady=(0, 6))
         lbl(head, "SUBSCRIPTIONS", THEME["muted"], 8, True).pack(side="left")
         button(head, "+ Add subscription", self.open_picker, small=True).pack(side="right")
+        self.row_filter = search_entry(head, self._filter_rows, "Filter subscriptions…", 24)
+        self.row_filter.pack(side="right", padx=(0, 8))
+        self.filter_note = lbl(head, "", THEME["muted"], 8)
+        self.filter_note.pack(side="right", padx=(0, 8))
 
         self.scroll = ScrollFrame(outer, max_height=int(top.winfo_screenheight() * 0.55), width=640)
         self.scroll.pack(fill="x")
@@ -236,15 +295,22 @@ class SettingsDialog:
         lbl(flags4, "e.g. Hermes when you haven't used it lately; it comes back once you do", THEME["muted"], 7).pack(side="left")
         flags5 = tk.Frame(outer, bg=THEME["bg"])
         flags5.pack(fill="x", pady=(8, 0))
-        lbl(flags5, "System tray", THEME["muted"]).pack(side="left", padx=(0, 6))
+        lbl(flags5, "Menu bar icon" if IS_MAC else "System tray", THEME["muted"]).pack(side="left", padx=(0, 6))
         from . import tray
-        if tray.available():
+        self.tray_ok = tray.available()
+        if self.tray_ok:
             self.v_tray = choice(flags5, TRAY_MODES, self.cfg.get("tray", "both"))
-            lbl(flags5, "left-click the icon to show/hide the widget", THEME["muted"], 7).pack(side="left")
+            lbl(flags5, "click the icon for its menu" if IS_MAC else "left-click the icon to show/hide the widget",
+                THEME["muted"], 7).pack(side="left")
         else:
-            self.v_tray = tk.StringVar(value="off")
-            lbl(flags5, "Windows only for now (macOS menu bar / Linux tray: contributions welcome)",
-                THEME["muted"], 8).pack(side="left")
+            self.v_tray = tk.StringVar(value=self.cfg.get("tray", "off"))
+            lbl(flags5, tray.unavailable_reason(), THEME["muted"], 8, wraplength=470).pack(side="left")
+        flags6 = tk.Frame(outer, bg=THEME["bg"])
+        flags6.pack(fill="x", pady=(8, 0))
+        self.v_background = toggle(flags6, "Run in background", self.cfg.get("background", False))
+        lbl(flags6, "starts at login and lives in the tray: the widget starts hidden; show/hide, pause or quit "
+            "from the icon" + ("" if self.tray_ok else " (needs a tray icon)"), THEME["muted"], 7,
+            wraplength=430).pack(side="left")
         flags3 = tk.Frame(outer, bg=THEME["bg"])
         flags3.pack(fill="x", pady=(8, 0))
         self.v_hist = toggle(flags3, "Keep usage history on this computer (30 days)", self.cfg.get("history", True))
@@ -413,6 +479,8 @@ class SettingsDialog:
         row["name"].pack(side="left")
         lbl(head, f"{cls.vendor} · {cls.plans}" if cls.vendor else cls.plans, THEME["muted"], 8).pack(side="left", padx=8)
         button(head, "Remove", lambda: self._remove(row), subtle=True, small=True).pack(side="right")
+        if getattr(cls, "key_url", ""):
+            button(head, "Get key ↗", lambda u=cls.key_url: webbrowser.open(u), subtle=True, small=True).pack(side="right")
         row["poll"] = entry(head, pc.get("poll_seconds", cls.default_poll), 5)
         lbl(head, "s", THEME["muted"]).pack(side="right")
         row["poll"].pack(side="right")
@@ -654,6 +722,13 @@ class SettingsDialog:
         cfg["sort"] = self.v_sort.get()
         cfg["expired_display"] = self.v_expired.get()
         cfg["tray"] = self.v_tray.get()
+        was_bg, cfg["background"] = bool(cfg.get("background")), bool(self.v_background.get()) and self.tray_ok
+        if cfg["background"] != was_bg:
+            from .core import log, set_startup
+            try:
+                set_startup(cfg["background"])  # background mode = start at login; turning it off undoes that
+            except OSError as e:
+                log(f"start at login failed: {e}")
         cfg["projections"] = bool(self.v_proj.get())
         cfg["history"] = bool(self.v_hist.get())
         cfg.pop("compact", None)
@@ -675,13 +750,22 @@ class SettingsDialog:
         pk.bind("<Escape>", lambda _e: pk.destroy())
         outer = tk.Frame(pk, bg=THEME["bg"], padx=16, pady=14)
         outer.pack(fill="both", expand=True)
-        lbl(outer, "Add or remove subscriptions. Changes apply when you Save in Settings.", THEME["muted"], 8).pack(anchor="w")
+        top_line = tk.Frame(outer, bg=THEME["bg"])
+        top_line.pack(fill="x")
+        lbl(top_line, "Add or remove subscriptions. Changes apply when you Save in Settings.", THEME["muted"],
+            8).pack(side="left")
+        self.pick_query = ""
+        self.pick_search = search_entry(top_line, self._on_pick_search, "Search providers…", 26)
+        self.pick_search.pack(side="right")
+        self.pick_search.bind("<Return>", lambda _e: self._pick_enter())
         self.pick_scroll = ScrollFrame(outer, max_height=int(pk.winfo_screenheight() * 0.6), width=600)
         self.pick_scroll.pack(fill="x", pady=(8, 0))
         bar = tk.Frame(outer, bg=THEME["bg"])
         bar.pack(fill="x", pady=(12, 0))
         button(bar, "Custom provider how-to", lambda: info_dialog(pk, "Custom providers", CUSTOM_HELP),
                subtle=True).pack(side="left")
+        button(bar, "Browser session how-to", lambda: info_dialog(pk, "Browser sessions", COOKIE_HELP),
+               subtle=True).pack(side="left", padx=(8, 0))
         button(bar, "Request / contribute a provider",
                lambda: webbrowser.open("https://github.com/chrisdelrey/ai_subusage/blob/main/CONTRIBUTING.md"),
                subtle=True).pack(side="left", padx=(8, 0))
@@ -689,6 +773,7 @@ class SettingsDialog:
         self._refresh_picker()
         pk.update_idletasks()
         pk.geometry(f"+{self.top.winfo_x() + 40}+{self.top.winfo_y() + 40}")
+        pk.after(50, self.pick_search.focus_set)
 
     def _refresh_picker(self) -> None:
         if self.picker is None or not self.picker.winfo_exists():
@@ -697,20 +782,60 @@ class SettingsDialog:
         for c in box.winfo_children():
             c.destroy()
         added = {r["cls"].type for r in self.rows}
+        q = getattr(self, "pick_query", "")
         groups = [("auto", "Detected from your existing logins"), ("key", "Paste an API key"),
-                  ("command", "Anything else")]
+                  ("cookie", "Paste a browser session (usage only shown on the website)"),
+                  ("api", "API usage: pay-as-you-go spend and credit (paste the key)"), ("command", "Anything else")]
+        shown = 0
         for auth, title in groups:
+            hits = [c for c in PROVIDERS.values() if c.auth == auth
+                    and matches(q, c.default_name, c.vendor, c.plans, c.setup, c.type, getattr(c, "old_names", ()) and
+                                " ".join(c.old_names) or "")]
+            if not hits:
+                continue
             lbl(box, title.upper(), THEME["muted"], 8, True).pack(anchor="w", pady=(8, 4))
-            for cls in PROVIDERS.values():
-                if cls.auth != auth:
-                    continue
+            for cls in hits:
                 self._picker_item(box, cls, cls.type in added)
-        lbl(box, "NOT BUILT IN YET: USE A CUSTOM PROVIDER OR CONTRIBUTE ONE", THEME["muted"], 8, True).pack(anchor="w", pady=(12, 4))
-        for name, vendor, source in CATALOG:
-            r = tk.Frame(box, bg=THEME["bg"])
-            r.pack(fill="x", pady=1)
-            lbl(r, f"{name}", THEME["fg"], 9).pack(side="left")
-            lbl(r, f"  {vendor} · {source}", THEME["muted"], 8).pack(side="left")
+            shown += len(hits)
+        cat = [c for c in CATALOG if matches(q, *c)]
+        if cat:
+            lbl(box, "NOT BUILT IN YET: USE A CUSTOM PROVIDER OR CONTRIBUTE ONE", THEME["muted"], 8, True).pack(
+                anchor="w", pady=(12, 4))
+            for name, vendor, source in cat:
+                r = tk.Frame(box, bg=THEME["bg"])
+                r.pack(fill="x", pady=1)
+                lbl(r, f"{name}", THEME["fg"], 9).pack(side="left")
+                lbl(r, f"  {vendor} · {source}", THEME["muted"], 8).pack(side="left")
+        if not shown and not cat:
+            lbl(box, f"Nothing matches “{q}”. You can still track it with a custom provider (Anything else → Custom).",
+                THEME["muted"], 9, wraplength=560).pack(anchor="w", pady=(12, 4))
+        self.pick_scroll.canvas.yview_moveto(0)
+        self._pick_hits = [c for c in PROVIDERS.values() if matches(q, c.default_name, c.vendor, c.plans, c.setup, c.type)]
+
+    def _on_pick_search(self, q: str) -> None:
+        if q != self.pick_query:
+            self.pick_query = q
+            self._refresh_picker()
+
+    def _pick_enter(self) -> None:
+        """Enter adds the only match (if it isn't added yet)."""
+        added = {r["cls"].type for r in self.rows}
+        hits = [c for c in getattr(self, "_pick_hits", []) if c.type not in added or c.multi]
+        if self.pick_query and len(hits) == 1:
+            self.add_provider(hits[0].type)
+
+    def _filter_rows(self, q: str) -> None:
+        shown = 0
+        for r in self.rows:
+            r["frame"].pack_forget()
+        for r in self.rows:
+            cls = r["cls"]
+            name = r["name"].get() if r.get("name") else cls.default_name
+            if matches(q, name, cls.default_name, cls.vendor, cls.plans, cls.type):
+                r["frame"].pack(fill="x", pady=(0, 8))
+                shown += 1
+        self.filter_note.configure(text=f"{shown} of {len(self.rows)}" if q else "")
+        self.scroll.canvas.yview_moveto(0)
 
     def _picker_item(self, box, cls: type[Provider], is_added: bool) -> None:
         P = THEME["panel"]
@@ -731,4 +856,7 @@ class SettingsDialog:
             lbl(top, "✓ Added  ", THEME["ok"], 8).pack(side="right")
         else:
             button(top, "Add", lambda t=cls.type: self.add_provider(t), small=True).pack(side="right")
+        if getattr(cls, "key_url", ""):
+            button(top, "Get key ↗", lambda u=cls.key_url: webbrowser.open(u), subtle=True,
+                   small=True).pack(side="right", padx=(0, 6))
         lbl(r, cls.setup, THEME["muted"], 8, wraplength=560).pack(anchor="w", pady=(2, 0))

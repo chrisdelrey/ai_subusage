@@ -24,14 +24,16 @@ class FakeHTTP:
         self.routes = routes
         self.calls: list[dict[str, Any]] = []
 
-    def __call__(self, url, headers=None, *, method="GET", json_body=None, form=None, timeout=15):
-        self.calls.append({"url": url, "headers": headers or {}, "json": json_body, "form": form})
+    def __call__(self, url, headers=None, *, method="GET", json_body=None, form=None, timeout=15, **kw):
+        self.calls.append({"url": url, "headers": headers or {}, "json": json_body, "form": form, "kw": kw})
         for key, resp in self.routes.items():
             if key in url:
                 if isinstance(resp, Exception):
                     raise resp
                 if isinstance(resp, Callable):  # type: ignore[arg-type]
                     return resp(url, json_body, form)
+                if isinstance(resp, str):  # http_text routes
+                    return resp
                 return json.loads(json.dumps(resp))
         raise AssertionError(f"unexpected URL {url}")
 
@@ -44,7 +46,8 @@ class HomeTestCase(unittest.TestCase):
 
     ENV = ("HOME", "USERPROFILE", "APPDATA", "XDG_CONFIG_HOME", "SUBUSAGE_CONFIG_DIR", "CLAUDE_CONFIG_DIR",
            "CODEX_HOME", "HERMES_HOME", "GEMINI_DIR", "GEMINI_OAUTH_CLIENT_ID", "GEMINI_OAUTH_CLIENT_SECRET",
-           "TEST_KEY")
+           "TEST_KEY", "XDG_DATA_HOME", "LOCALAPPDATA", "FACTORY_API_KEY", "OPENCODE_API_KEY", "KILO_API_KEY",
+           "CODEBUFF_API_KEY", "AMP_API_KEY", "KIRO_DATA_DIR")
 
     def setUp(self) -> None:
         self._saved = {k: os.environ.get(k) for k in self.ENV}

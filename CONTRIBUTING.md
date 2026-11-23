@@ -29,11 +29,15 @@ subusage/
   update.py            version/build info, update check (GitHub Releases) and self-update
   history.py           local usage history (SQLite) + time-to-limit projections
   charts.py            hover tooltip mini chart and the History window
-  tray.py              Windows tray icon (ctypes + Shell_NotifyIcon) and its ring-icon renderer
+  tray.py              tray icon: Windows (Shell_NotifyIcon), macOS (NSStatusItem via the ObjC runtime), ring renderer
+  sni.py               Linux tray: a tiny D-Bus client + StatusNotifierItem / dbusmenu
   providers/
     __init__.py        registry (PROVIDERS) + catalog of not-yet-built-in subscriptions (CATALOG)
     claude.py, codex.py, copilot.py, gemini.py, cursor.py, jetbrains.py, nous.py
     keyed.py           small API-key providers (z.ai, Kimi, Synthetic, ClinePass)
+    apikeys.py         more key / CLI-login providers (Warp, Poe, MiniMax, Factory, Kilo, Codebuff, Amp…)
+    local.py           local-login providers (Windsurf, Kiro, Amazon Q, Antigravity, Grok, CodeRabbit)
+    web.py             browser-session providers (Notion, Mistral, Perplexity…) and the CookieProvider base
     command.py         custom command provider + demo data
 tests/                 unittest suites; helpers.py has FakeHTTP and an isolated fake HOME
 examples/              custom provider template
@@ -56,7 +60,7 @@ class AcmeProvider(Provider):
     default_name = "Acme AI"
     vendor = "Acme"
     plans = "Plus, Pro"
-    auth = "auto"                       # "auto" = reads an existing login, "key" = paste an API key
+    auth = "auto"                       # "auto" = existing login, "key" = paste a key, "cookie" = browser session
     setup = "Run `acme login`. SubUsage reads that login read-only."
     usage_url = "https://acme.ai/settings/usage"
     accent = "#ff6b00"

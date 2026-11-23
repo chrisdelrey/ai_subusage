@@ -3,6 +3,17 @@
 Every release has notes here; the release workflow publishes them, and the widget shows them before
 you update ("What's new") and once after it restarts.
 
+## 2.6.0
+- **27 new subscriptions (39 built in).** Detected from your existing logins: **Windsurf**, **Kiro**, **Amazon Q Developer**, **Antigravity**, **Grok**, **Zed**, **Factory Droid**, **OpenCode Go**, **Kilo Pass**, **Codebuff**, **Amp**, **CodeRabbit**. With an API key: **MiniMax**, **Alibaba Coding Plan** (Qwen), **Warp**, **GitKraken AI**, **Chutes**, **Poe**. With a browser session: **Notion AI**, **Mistral** (Le Chat Pro/Team: Vibe and API budgets), **Perplexity**, **Augment Code**, **Devin**, **Raycast AI**, **T3 Chat**, **Manus**, **Ollama Cloud**. These are new, so please report any that misbehave.
+- **API usage (14 APIs):** OpenAI API and Anthropic API (month-to-date spend, with an Admin key), OpenRouter, xAI API, DeepSeek, Moonshot, DeepInfra, Vercel AI Gateway, SiliconFlow, Venice, fal, ElevenLabs, Tavily and Linkup. Every endpoint is pre-set: paste just the key. Each has a **Get key ↗** button that opens the right page, and instructions for which kind of key it needs. An optional monthly budget (spend APIs) or full balance (prepaid APIs) turns the number into a bar.
+- **Browser sessions:** for subscriptions whose usage is only on the vendor's website, paste the Cookie header or a whole "Copy as cURL" once. SubUsage keeps only the cookies that vendor needs and sends them only there. An expired session says so instead of disappearing.
+- **Search:** the Add subscription picker has a search box (name, vendor or plan; Enter adds the only match), and Settings can filter your list.
+- **Tray icon on macOS and Linux.** The ring icon now lives in the macOS menu bar and in Linux trays (StatusNotifierItem: KDE, Ubuntu, Cinnamon, XFCE, waybar…), not just Windows. Its menu adds **Pause/Resume updates** and a **Start at login** checkmark.
+- **Run in background:** one switch in Settings starts SubUsage at login with only the tray icon showing; open the widget when you want it.
+- **Pause updates:** stop all polling from the tray, the right-click menu or the command line; the widget keeps the last numbers and shows "Paused".
+- **Command line control:** `--show`, `--hide`, `--toggle`, `--pause`, `--resume`, `--refresh` and `--quit` talk to the running widget; `--background` starts it hidden.
+- New installs on macOS default to the menu bar icon plus the widget.
+
 ## 2.5.0
 - **System tray icon (Windows).** SubUsage now sits in the tray. Its icon is a small ring that fills with your tightest limit (green, amber, red), and hovering it lists every subscription. **Left-click** shows or hides the widget. **Right-click** has Show/Hide, Refresh, Settings, Add subscription and Quit. Settings → System tray: *Tray icon + widget* (default), *Tray icon only* (starts hidden; open the widget when you want to track), or *No tray icon*. The widget gets a ▁ button and a "Hide to tray" menu item.
 - **Launching SubUsage again brings the widget back** instead of doing nothing, on every OS.

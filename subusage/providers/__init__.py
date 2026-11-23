@@ -18,43 +18,40 @@ from .github import GitHubProvider
 from .jetbrains import JetBrainsProvider
 from .keyed import ClinePassProvider, KimiProvider, SyntheticProvider, ZaiProvider
 from .nous import NousProvider
+from .api import (AnthropicApiProvider, DeepInfraProvider, DeepSeekProvider, ElevenLabsProvider, FalProvider,
+                  LinkupProvider, MoonshotProvider, OpenAIApiProvider, OpenRouterProvider, SiliconFlowProvider,
+                  TavilyProvider, VeniceProvider, VercelGatewayProvider, XaiApiProvider)
+from .apikeys import (AlibabaProvider, AmpProvider, ChutesProvider, CodebuffProvider, FactoryProvider, GitKrakenProvider,
+                      KiloProvider, MiniMaxProvider, OpenCodeGoProvider, PoeProvider, WarpProvider)
+from .local import (AmazonQProvider, AntigravityProvider, CodeRabbitProvider, GrokProvider, KiroProvider,
+                    WindsurfProvider)
+from .web import (AugmentProvider, DevinProvider, ManusProvider, MistralProvider, NotionProvider, OllamaProvider,
+                  PerplexityProvider, RaycastProvider, T3ChatProvider, ZedProvider)
 
 _ORDER: list[type[Provider]] = [
+    # Detected from logins already on this computer
     ClaudeProvider, CodexProvider, CopilotProvider, GitHubProvider, GeminiProvider, CursorProvider, JetBrainsProvider,
-    NousProvider, ZaiProvider, KimiProvider, SyntheticProvider, ClinePassProvider, CommandProvider,
+    NousProvider, WindsurfProvider, KiroProvider, AmazonQProvider, AntigravityProvider, GrokProvider, ZedProvider,
+    FactoryProvider, OpenCodeGoProvider, KiloProvider, CodebuffProvider, AmpProvider, CodeRabbitProvider,
+    ClinePassProvider,
+    # API key
+    ZaiProvider, KimiProvider, SyntheticProvider, MiniMaxProvider, AlibabaProvider, WarpProvider, GitKrakenProvider,
+    ChutesProvider, PoeProvider,
+    # Browser session
+    NotionProvider, MistralProvider, PerplexityProvider, AugmentProvider, DevinProvider, RaycastProvider,
+    T3ChatProvider, ManusProvider, OllamaProvider,
+    # Pay-as-you-go API usage (spend / balance)
+    OpenAIApiProvider, AnthropicApiProvider, OpenRouterProvider, XaiApiProvider, DeepSeekProvider, MoonshotProvider,
+    DeepInfraProvider, VercelGatewayProvider, SiliconFlowProvider, VeniceProvider, FalProvider, ElevenLabsProvider,
+    TavilyProvider, LinkupProvider,
+    CommandProvider,
 ]
 PROVIDERS: dict[str, type[Provider]] = {c.type: c for c in _ORDER}
 
 # (name, vendor, what a usage source would need) — not built in yet.
 CATALOG: list[tuple[str, str, str]] = [
-    ("Windsurf", "Cognition", "Local state.vscdb cache (cachedPlanInfo) or a windsurf.com session"),
-    ("Devin", "Cognition", "Bearer token from app.devin.ai for daily/weekly quotas"),
-    ("Grok / SuperGrok", "xAI", "Grok CLI billing RPC or grok.com session"),
-    ("Perplexity Pro / Max", "Perplexity", "perplexity.ai session for usage credits"),
-    ("Mistral Le Chat Pro", "Mistral AI", "console.mistral.ai session for monthly plan usage"),
-    ("MiniMax Coding Plan", "MiniMax", "API key or platform.minimax.io session for 5-hour/weekly windows"),
-    ("Qwen Code / Token Plan", "Alibaba", "Model Studio session for 5-hour/weekly token-plan usage"),
-    ("Kiro", "AWS", "Kiro CLI usage command for monthly credits"),
-    ("Amazon Q Developer Pro", "AWS", "No public usage source known"),
-    ("Augment Code", "Augment", "Augment CLI or app.augmentcode.com session for credits"),
-    ("Amp", "Sourcegraph", "ampcode.com session for plan usage"),
-    ("Factory Droid", "Factory", "app.factory.ai session for monthly tokens"),
-    ("Warp AI", "Warp", "Warp API token for request limits and monthly credits"),
-    ("Zed Pro", "Zed Industries", "Zed's local session for edit-prediction and prompt quotas"),
-    ("Ollama Cloud", "Ollama", "ollama.com session for hourly/daily cloud usage"),
-    ("OpenCode Zen / Go", "SST", "opencode.ai workspace session for subscription usage"),
-    ("Kilo Pass", "Kilo Code", "Kilo API token for pass usage"),
-    ("Codebuff", "Codebuff", "~/.config/manicode/credentials.json for credits and weekly limit"),
-    ("GitKraken AI", "GitKraken", "Account token for weekly AI credits"),
-    ("Raycast AI", "Raycast", "raycast.com session for monthly AI credits"),
-    ("Notion AI", "Notion", "notion.so session for workspace AI allowances"),
-    ("T3 Chat", "T3", "t3.chat session for base and overage buckets"),
-    ("Poe", "Quora", "Poe API key for point balance"),
-    ("Chutes", "Chutes", "API key for subscription quota windows"),
-    ("Manus", "Manus", "manus.im session for monthly and daily credits"),
-    ("CodeRabbit", "CodeRabbit", "CodeRabbit CLI usage report"),
-    ("Muse Code", "Muse", "Muse CLI login for subscription quotas"),
-    ("Antigravity", "Google", "Local language-server probe or agy CLI"),
+    ("Qwen Cloud Token Plan", "Alibaba", "home.qwencloud.com session (sec_token) for 5-hour/weekly token-plan usage"),
+    ("Muse Code", "Meta", "Muse CLI device-code login for 5-hour and weekly quotas"),
 ]
 
 __all__ = ["PROVIDERS", "CATALOG", "Provider"]
