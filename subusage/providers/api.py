@@ -153,16 +153,19 @@ class AnthropicApiProvider(ApiProvider):
     default_name = "Anthropic API"
     vendor = "Anthropic"
     plans = "Pay as you go (month-to-date spend)"
-    setup = ("Needs an Admin API key (sk-ant-admin…), not a normal API key: console.anthropic.com → Settings → "
-             "Admin keys → Create admin key (organization admins only; individual accounts can't create them).")
-    key_url = "https://console.anthropic.com/settings/admin-keys"
-    key_help = "Admin key (sk-ant-admin…). env:ANTHROPIC_ADMIN_KEY works too."
-    usage_url = "https://console.anthropic.com/usage"
+    setup = ("Needs an Admin API key (sk-ant-admin01-…); a normal API key can't read costs. Individual Console accounts "
+             "can't create one: first set up an organization at platform.claude.com/settings/organization. Then, as an "
+             "organization admin, open platform.claude.com/settings/admin-keys → Create admin key → name it, pick an "
+             "expiration → Add, and copy the key (it's shown once). Claude Enterprise (claude.ai) orgs aren't supported.")
+    key_url = "https://platform.claude.com/settings/admin-keys"
+    key_help = "Admin key (sk-ant-admin01-…). env:ANTHROPIC_ADMIN_KEY works too."
+    usage_url = "https://platform.claude.com/usage"
     accent = "#d97757"
-    fields = api_fields("Admin key (sk-ant-admin…). env:ANTHROPIC_ADMIN_KEY works too.", "spend")
+    fields = api_fields("Admin key (sk-ant-admin01-…). env:ANTHROPIC_ADMIN_KEY works too.", "spend")
 
     def key_hint(self) -> str:
-        return "It must be an Admin key (sk-ant-admin…) from Settings → Admin keys."
+        return ("It must be an Admin key (sk-ant-admin01-…) from platform.claude.com/settings/admin-keys, "
+                "which needs an organization (not an individual account).")
 
     def fetch(self) -> Snapshot:
         key = self.key()

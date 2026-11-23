@@ -42,7 +42,7 @@ Runs on **Windows, macOS and Ubuntu/Linux**. Pure Python standard library, no de
 - **Uses the logins you already have:** reads the sign-in saved by Claude Code, Codex CLI, Gemini CLI, the Cursor app, JetBrains IDEs, Hermes and more. There are no passwords to enter.
 - **API usage too:** month-to-date spend or remaining credit for 14 pay-as-you-go APIs (OpenAI, Anthropic, OpenRouter, xAI, DeepSeek…). Paste just the key; every endpoint is pre-set, and each one has a **Get key ↗** button and step-by-step instructions.
 - **39 subscriptions built in, with search:** type in the picker to find one (Enter adds it), or filter your own list in Settings. Paste an API key for key-based plans, a browser session for website-only ones, or plug in anything else with a custom command.
-- **Settings window:** a login-file field for each subscription with **Find…** (also searches WSL on Windows), **Browse…** and **Test**, plus one-click **Sign in with GitHub** for GitHub Copilot.
+- **Settings window:** resizable, with a navigation menu (My providers · Add providers · Display · Tray & startup · History & data · About & updates). Providers are grouped by vendor, so Claude and the Anthropic API sit together, and each one collapses to a single line with its live status. Open one to edit it: login-file **Find…** (also searches WSL on Windows), **Browse…**, **Test**, **Get key ↗**, and one-click **Sign in with GitHub** for GitHub Copilot.
 - **Gentle on vendors:** polls every 5 minutes by default, backs off on rate limits (honoring `Retry-After`), and keeps showing the last good data while it waits.
 - **Tray / menu bar icon on all three OSes:** a ring that fills with your tightest limit, a tooltip listing every subscription, and a menu to show/hide the widget, pause/resume updates, refresh, and toggle start at login.
 - **Run in background:** one switch makes SubUsage start at login and live in the tray, with the widget hidden until you want it. Control it from the command line too (`--show`, `--hide`, `--pause`, `--resume`, `--quit`).
@@ -99,7 +99,7 @@ Runs on **Windows, macOS and Ubuntu/Linux**. Pure Python standard library, no de
 | API | Key you need | What it shows |
 |---|---|---|
 | **OpenAI API** | Admin key (`sk-admin-…`) | Spend this month (optionally one project) |
-| **Anthropic API** | Admin key (`sk-ant-admin…`) | Spend this month |
+| **Anthropic API** | Admin key (`sk-ant-admin01-…`; needs an organization, not an individual Console account) | Spend this month |
 | **OpenRouter** | API key | Credit balance, the key's limit, this month's spend on the key |
 | **xAI API** | Management key + Team ID | Prepaid credit |
 | **DeepSeek API** | API key | Balance |
@@ -175,11 +175,11 @@ On Windows, use `python` instead of `python3`. You can also double-click **`subu
   <img src="docs/history.png" alt="History window" width="500">
 </p>
 
-Subscriptions without a login on this machine are hidden. So are subscriptions whose login has **expired** because you haven't used that tool lately. SubUsage watches the login file (a cheap local check, no network) and brings the subscription back as soon as the tool refreshes it. Settings → **Expired logins** can instead show them as one dim line, or show the error. **Refresh now** also retries them. To list them anyway, turn off "Hide subscriptions with no login" in Settings.
+Subscriptions without a login on this machine are hidden. So are subscriptions whose login has **expired** because you haven't used that tool lately. SubUsage watches the login file (a cheap local check, no network) and brings the subscription back as soon as the tool refreshes it. Settings → Display → **Expired logins** can instead show them as one dim line, or show the error. **Refresh now** also retries them. To list them anyway, turn off "Hide providers with no login" in Settings → Display.
 
 ## Adding and configuring subscriptions
 
-Open **⚙ Settings → + Add subscription**. The picker groups everything by how it signs in:
+Open **⚙ Settings → Add providers**. It lists everything grouped by vendor (each entry is tagged Subscription or API usage), with filters for All, Subscriptions, API usage and Browser session. By how they sign in:
 
 - **Detected from your existing logins:** add it, and if you're signed in to that vendor's CLI or app, it just works.
 - **Paste an API key:** add it, then paste the key in its Settings row.
@@ -212,7 +212,7 @@ Each subscription's row in Settings has:
 
 ### API usage
 
-Add one from the picker's **API usage** group, then press **Get key ↗** in its row: it opens the exact page where that key is created, and the row's instructions say which kind of key it must be (OpenAI and Anthropic need an **Admin** key; normal keys can't read billing). Paste the key and press **Test**.
+In **Add providers**, pick the **API usage** filter and add one, then press **Get key ↗** in its row: it opens the exact page where that key is created, and the row's instructions say which kind of key it must be (OpenAI and Anthropic need an **Admin** key; normal keys can't read billing, and Anthropic only offers Admin keys to organizations, not individual Console accounts). Paste the key and press **Test**.
 
 Most billing APIs report a number, not a limit, so you can give SubUsage one:
 
@@ -243,7 +243,7 @@ Anything that can print a usage number can be a subscription. Write a script tha
  "notes": ["optional extra line"]}
 ```
 
-Then go to Settings → + Add subscription → **Custom** and enter the command (for example `python ~/bin/my_usage.py`). Start from [`examples/custom_provider.py`](examples/custom_provider.py).
+Then go to Settings → Add providers → **Custom** and enter the command (for example `python ~/bin/my_usage.py`). Start from [`examples/custom_provider.py`](examples/custom_provider.py).
 
 ## System tray and background mode
 
@@ -253,9 +253,9 @@ SubUsage puts a small ring icon in the Windows notification area, the macOS menu
 
 On Windows and Linux, a left-click shows or hides the widget; on macOS, clicking opens the menu.
 
-**Settings → System tray** (Menu bar icon on macOS) has three choices: **Tray icon + widget**, **Tray icon only** (starts in the tray; open the widget when you want to track), and **No tray icon**.
+**Settings → Tray & startup → Tray icon** (Menu bar icon on macOS) has three choices: **Tray icon + widget**, **Tray icon only** (starts in the tray; open the widget when you want to track), and **No tray icon**.
 
-**Settings → Run in background** is the "set and forget" option: SubUsage starts at login, shows only the icon, and the widget stays hidden until you open it. Turning it off also turns off start at login. It's a per-user background app rather than an OS service, because system services can't show a tray icon or windows.
+**Settings → Tray & startup → Run in background** is the "set and forget" option: SubUsage starts at login, shows only the icon, and the widget stays hidden until you open it. Turning it off also turns off start at login. It's a per-user background app rather than an OS service, because system services can't show a tray icon or windows.
 
 Linux needs a panel that supports StatusNotifierItem tray icons: KDE Plasma, Ubuntu (its GNOME has the AppIndicator extension), Cinnamon, XFCE, LXQt, Budgie, waybar and most others. On stock GNOME (Fedora, for example), install the "AppIndicator and KStatusNotifierItem Support" extension. Without a tray host, SubUsage keeps the widget visible and Settings explains why.
 
@@ -337,7 +337,7 @@ python3 -m subusage --refresh | --quit
 | Symptom | Fix |
 |---|---|
 | A subscription doesn't appear | It has no login on this machine. Run `--once` to see why, or turn off "Hide subscriptions with no login". |
-| A subscription disappeared | Its login expired (you haven't used that tool lately). Use the tool once and it reappears. To see these, set Settings → Expired logins → Show dimmed. |
+| A subscription disappeared | Its login expired (you haven't used that tool lately). Use the tool once and it reappears. To see these, set Settings → Display → Expired logins → Show dimmed. |
 | "Login expired; it refreshes the next time you use …" | Shown when Expired logins is set to "Show the error". Use that tool once (`claude`, `codex`, `gemini`, Hermes, Cursor). |
 | "Rate limited, retrying in …" | The vendor throttled its usage endpoint. Claude's is strict: keep its interval at 300 s or more. Old data stays visible. |
 | GitHub Copilot: "didn't accept the GitHub CLI token" |

@@ -48,13 +48,32 @@ class UiSmokeTests(HomeTestCase):
             self.assertEqual(d.rows[-1]["cls"].type, "zai")
             d._set(d.rows[-1], "api_key", "env:ZAI_KEY")
             d._remove(next(r for r in d.rows if r["cls"].type == "jetbrains"))
+            # Grouped by vendor, collapsed until opened, and a new row opens itself.
+            d.add_provider("anthropic_api")
+            self.assertIn("Anthropic", d.groups)
+            self.assertEqual({r["cls"].type for r in d.groups["Anthropic"]["rows"]}, {"claude", "anthropic_api"})
+            claude = next(r for r in d.rows if r["cls"].type == "claude")
+            self.assertFalse(claude["built"])
+            self.assertTrue(d.rows[-1]["built"])
+            d._toggle_row(claude, True)
+            self.assertTrue(claude["built"] and claude["body"].winfo_manager())
+            d.show("add")
+            d._set_kind("api")
+            self.assertTrue(d._pick_hits and all(c.auth == "api" for c in d._pick_hits))
+            for page in ("display", "tray", "data", "about", "providers"):
+                d.show(page)
+                self.pump(w.root)
+            d._filter_rows("anthropic")
+            self.assertEqual(d.filter_note.cget("text"), f"2 of {len(d.rows)}")
+            d._filter_rows("")
             d.save()
             self.pump(w.root)
             saved = core.load_config()
             types = [p["type"] for p in saved["providers"]]
             self.assertIn("zai", types)
+            self.assertEqual(types.index("anthropic_api"), types.index("claude") + 1)  # saved grouped by vendor
             self.assertNotIn("jetbrains", types)
-            self.assertEqual(saved["providers"][-1]["api_key"], "env:ZAI_KEY")
+            self.assertEqual(next(p for p in saved["providers"] if p["type"] == "zai")["api_key"], "env:ZAI_KEY")
             self.assertEqual(len(w.providers), len(types))
         finally:
             w.quit()
