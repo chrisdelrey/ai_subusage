@@ -190,7 +190,7 @@ All need just the key (env:VAR works). "Monthly budget" / "Full balance" are opt
 | API | Key | Request | Shows |
 |---|---|---|---|
 | OpenAI API | Admin key (`sk-admin-…`; Organization → Admin keys, Owners only) | `GET api.openai.com/v1/organization/costs?start_time=<1st of month>&bucket_width=1d` (paginated; optional `project_ids`) | Month-to-date spend |
-| Anthropic API | Admin key (`sk-ant-admin…`; Settings → Admin keys) | `GET api.anthropic.com/v1/organizations/cost_report?starting_at=…&ending_at=…` (`amount` is a decimal string in cents) | Month-to-date spend |
+| Anthropic API | Admin key (`sk-ant-admin01-…`; platform.claude.com/settings/admin-keys, org admins only — individual accounts must set up an organization first) | `GET api.anthropic.com/v1/organizations/cost_report?starting_at=…&ending_at=…` (`amount` is a decimal string in cents) | Month-to-date spend |
 | OpenRouter | API key | `GET openrouter.ai/api/v1/key` and `/api/v1/credits` | Key limit, credit balance, key spend this month |
 | xAI API | Management key + Team ID | `GET management-api.x.ai/v1/billing/teams/<team>/prepaid/balance` (credit is a negative `total.val` in cents) | Prepaid credit |
 | DeepSeek API | API key | `GET api.deepseek.com/user/balance` | Balance (USD entry preferred) |

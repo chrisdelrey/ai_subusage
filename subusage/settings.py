@@ -135,24 +135,42 @@ def choice(parent, options, value, bg=None):
 
 
 class ScrollFrame(tk.Frame):
-    """A vertically scrollable frame; put children in .inner."""
+    """A vertically scrollable frame; put children in .inner.
 
-    def __init__(self, parent, max_height: int, width: int):
+    With fill=True it takes all the space its parent gives it, the inner frame stretches to its width
+    (so rows follow the window when it's resized), and the scrollbar spans the full height.
+    Otherwise it sizes itself to its content, up to max_height."""
+
+    def __init__(self, parent, max_height: int = 0, width: int = 600, fill: bool = False):
         super().__init__(parent, bg=parent["bg"])
-        self.max_height = max_height
+        self.max_height, self.fill = max_height, fill
         self.canvas = tk.Canvas(self, bg=parent["bg"], highlightthickness=0, width=width)
         self.bar = tk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
         self.inner = tk.Frame(self.canvas, bg=parent["bg"])
         self.win = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
-        self.canvas.configure(yscrollcommand=self.bar.set)
+        self.canvas.configure(yscrollcommand=self._set_bar)
+        if fill:
+            self.bar.pack(side="right", fill="y")
         self.canvas.pack(side="left", fill="both", expand=True)
         self.inner.bind("<Configure>", lambda _e: self._resize())
+        if fill:
+            self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfigure(self.win, width=e.width))
         for w in (self.canvas, self.inner):
             w.bind("<Enter>", lambda _e: self._wheel(True))
             w.bind("<Leave>", lambda _e: self._wheel(False))
 
+    def _set_bar(self, lo, hi) -> None:
+        self.bar.set(lo, hi)
+        if self.fill:  # hide the bar when everything fits
+            if float(lo) <= 0.0 and float(hi) >= 1.0:
+                self.bar.pack_forget()
+            elif not self.bar.winfo_ismapped():
+                self.bar.pack(side="right", fill="y", before=self.canvas)
+
     def _resize(self) -> None:
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        if self.fill:
+            return
         h = self.inner.winfo_reqheight()
         self.canvas.configure(height=min(h, self.max_height), width=self.inner.winfo_reqwidth())
         if h > self.max_height:
@@ -160,19 +178,30 @@ class ScrollFrame(tk.Frame):
         else:
             self.bar.pack_forget()
 
+    def _scroll(self, units: int) -> None:
+        if self.canvas.yview() != (0.0, 1.0):
+            self.canvas.yview_scroll(units, "units")
+
     def _wheel(self, on: bool) -> None:
         if IS_LINUX:
             if on:
-                self.bind_all("<Button-4>", lambda _e: self.canvas.yview_scroll(-3, "units"))
-                self.bind_all("<Button-5>", lambda _e: self.canvas.yview_scroll(3, "units"))
+                self.bind_all("<Button-4>", lambda _e: self._scroll(-3))
+                self.bind_all("<Button-5>", lambda _e: self._scroll(3))
             else:
                 self.unbind_all("<Button-4>")
                 self.unbind_all("<Button-5>")
         elif on:
             step = 1 if IS_MAC else 120
-            self.bind_all("<MouseWheel>", lambda e: self.canvas.yview_scroll(int(-e.delta / step), "units"))
+            self.bind_all("<MouseWheel>", lambda e: self._scroll(int(-e.delta / step)))
         else:
             self.unbind_all("<MouseWheel>")
+
+    def scroll_to(self, widget) -> None:
+        """Scroll so widget (inside .inner) is near the top."""
+        self.update_idletasks()
+        total = max(1, self.inner.winfo_height())
+        y = widget.winfo_rooty() - self.inner.winfo_rooty()
+        self.canvas.yview_moveto(max(0.0, (y - 8) / total))
 
 
 def info_dialog(parent, title: str, text: str) -> None:
@@ -238,101 +267,127 @@ def notes_dialog(parent, title: str, text: str, footer: str = "") -> tk.Toplevel
 # Settings window
 # --------------------------------------------------------------------------------------------------
 
+KIND_TAG = {"auto": "Subscription", "key": "Subscription", "cookie": "Subscription", "api": "API usage",
+            "command": "Custom"}
+KIND_FILTERS = (("all", "All"), ("sub", "Subscriptions"), ("api", "API usage"), ("cookie", "Browser session"))
+PAGES = (("providers", "My providers"), ("add", "Add providers"), ("display", "Display"),
+         ("tray", "Tray & startup"), ("data", "History & data"), ("about", "About & updates"))
+
+
+def kind_matches(cls: type[Provider], kind: str) -> bool:
+    return (kind == "all" or (kind == "api" and cls.auth == "api") or (kind == "cookie" and cls.auth == "cookie")
+            or (kind == "sub" and cls.auth in ("auto", "key", "cookie")))
+
+
+def vendor_of(cls: type[Provider]) -> str:
+    return (cls.vendor or cls.default_name or "Other").strip()
+
+
 class SettingsDialog:
+    """Settings: a resizable window with a navigation menu on the left and one page at a time on the right."""
+
     def __init__(self, widget):
         self.w = widget
         self.cfg = json.loads(json.dumps(widget.cfg))
         self.rows: list[dict[str, Any]] = []
-        self.picker: Optional[tk.Toplevel] = None
+        self.groups: dict[str, dict[str, Any]] = {}
+        self.page = ""
+        self.pick_query, self.pick_kind = "", "all"
         top = self.top = tk.Toplevel(widget.root)
         top.title(f"{APP} settings")
         top.configure(bg=THEME["bg"])
-        top.attributes("-topmost", True)
-        top.resizable(False, False)
+        top.attributes("-topmost", bool(self.cfg.get("always_on_top", True)))
+        top.minsize(760, 480)
         top.bind("<Escape>", lambda _e: self.close())
         top.protocol("WM_DELETE_WINDOW", self.close)
 
-        outer = tk.Frame(top, bg=THEME["bg"], padx=16, pady=14)
-        outer.pack(fill="both", expand=True)
-        head = tk.Frame(outer, bg=THEME["bg"])
-        head.pack(fill="x", pady=(0, 6))
-        lbl(head, "SUBSCRIPTIONS", THEME["muted"], 8, True).pack(side="left")
-        button(head, "+ Add subscription", self.open_picker, small=True).pack(side="right")
-        self.row_filter = search_entry(head, self._filter_rows, "Filter subscriptions…", 24)
-        self.row_filter.pack(side="right", padx=(0, 8))
-        self.filter_note = lbl(head, "", THEME["muted"], 8)
-        self.filter_note.pack(side="right", padx=(0, 8))
-
-        self.scroll = ScrollFrame(outer, max_height=int(top.winfo_screenheight() * 0.55), width=640)
-        self.scroll.pack(fill="x")
-        self.prov_box = self.scroll.inner
-        for pc in self.cfg.get("providers", []):
-            if pc.get("type") in PROVIDERS:
-                self._provider_row(pc)
-
-        lbl(outer, "DISPLAY", THEME["muted"], 8, True).pack(anchor="w", pady=(12, 6))
-        disp = tk.Frame(outer, bg=THEME["bg"])
-        disp.pack(fill="x")
-        self.v_warn = self._num(disp, "Amber at %", self.cfg.get("warn_pct", 70), 0)
-        self.v_crit = self._num(disp, "Red at %", self.cfg.get("crit_pct", 90), 1)
-        self.v_width = self._num(disp, "Width px", self.cfg.get("width", 300), 2)
-        self.v_opacity = self._num(disp, "Opacity %", int(float(self.cfg.get("opacity", 0.95)) * 100), 3)
-        flags = tk.Frame(outer, bg=THEME["bg"])
-        flags.pack(fill="x", pady=(8, 0))
-        lbl(flags, "View", THEME["muted"]).pack(side="left", padx=(0, 6))
-        self.v_view = choice(flags, VIEWS, view_of(self.cfg))
-        lbl(flags, "Sort", THEME["muted"]).pack(side="left", padx=(0, 6))
-        self.v_sort = choice(flags, SORTS, self.cfg.get("sort", "manual"))
-        self.v_top = toggle(flags, "Always on top", self.cfg.get("always_on_top", True))
-        flags2 = tk.Frame(outer, bg=THEME["bg"])
-        flags2.pack(fill="x", pady=(8, 0))
-        self.v_hide = toggle(flags2, "Hide subscriptions with no login", self.cfg.get("hide_unconfigured", True))
-        self.v_proj = toggle(flags2, "Warn when a limit will run out before it resets", self.cfg.get("projections", True))
-        flags4 = tk.Frame(outer, bg=THEME["bg"])
-        flags4.pack(fill="x", pady=(8, 0))
-        lbl(flags4, "Expired logins", THEME["muted"]).pack(side="left", padx=(0, 6))
-        self.v_expired = choice(flags4, EXPIRED, self.cfg.get("expired_display", "hide"))
-        lbl(flags4, "e.g. Hermes when you haven't used it lately; it comes back once you do", THEME["muted"], 7).pack(side="left")
-        flags5 = tk.Frame(outer, bg=THEME["bg"])
-        flags5.pack(fill="x", pady=(8, 0))
-        lbl(flags5, "Menu bar icon" if IS_MAC else "System tray", THEME["muted"]).pack(side="left", padx=(0, 6))
-        from . import tray
-        self.tray_ok = tray.available()
-        if self.tray_ok:
-            self.v_tray = choice(flags5, TRAY_MODES, self.cfg.get("tray", "both"))
-            lbl(flags5, "click the icon for its menu" if IS_MAC else "left-click the icon to show/hide the widget",
-                THEME["muted"], 7).pack(side="left")
-        else:
-            self.v_tray = tk.StringVar(value=self.cfg.get("tray", "off"))
-            lbl(flags5, tray.unavailable_reason(), THEME["muted"], 8, wraplength=470).pack(side="left")
-        flags6 = tk.Frame(outer, bg=THEME["bg"])
-        flags6.pack(fill="x", pady=(8, 0))
-        self.v_background = toggle(flags6, "Run in background", self.cfg.get("background", False))
-        lbl(flags6, "starts at login and lives in the tray: the widget starts hidden; show/hide, pause or quit "
-            "from the icon" + ("" if self.tray_ok else " (needs a tray icon)"), THEME["muted"], 7,
-            wraplength=430).pack(side="left")
-        flags3 = tk.Frame(outer, bg=THEME["bg"])
-        flags3.pack(fill="x", pady=(8, 0))
-        self.v_hist = toggle(flags3, "Keep usage history on this computer (30 days)", self.cfg.get("history", True))
-        button(flags3, "Clear history", self._clear_history, subtle=True, small=True).pack(side="left")
-
-        self._about(outer)
-
-        bar = tk.Frame(outer, bg=THEME["bg"])
-        bar.pack(fill="x", pady=(16, 0))
+        # Save / Cancel always visible at the bottom
+        bar = tk.Frame(top, bg=THEME["panel"], padx=14, pady=8)
+        bar.pack(side="bottom", fill="x")
         button(bar, "Open config file", lambda: open_path(config_path()), subtle=True).pack(side="left")
         button(bar, "Save", self.save, primary=True).pack(side="right")
         button(bar, "Cancel", self.close).pack(side="right", padx=(0, 8))
+
+        body = tk.Frame(top, bg=THEME["bg"])
+        body.pack(side="top", fill="both", expand=True)
+        nav = tk.Frame(body, bg=THEME["panel"], width=180, padx=8, pady=12)
+        nav.pack(side="left", fill="y")
+        nav.pack_propagate(False)
+        lbl(nav, APP, THEME["fg"], 12, True).pack(anchor="w", padx=8, pady=(0, 12))
+        self.nav_items: dict[str, tk.Label] = {}
+        for key, title in PAGES:
+            item = tk.Label(nav, text=title, anchor="w", padx=10, pady=6, cursor="hand2", bg=THEME["panel"],
+                            fg=THEME["muted"], font=(FONT, fsize(10)))
+            item.pack(fill="x", pady=1)
+            item.bind("<Button-1>", lambda _e, k=key: self.show(k))
+            self.nav_items[key] = item
+        self.content = tk.Frame(body, bg=THEME["bg"], padx=18, pady=14)
+        self.content.pack(side="left", fill="both", expand=True)
+        self.pages: dict[str, tk.Frame] = {}
+
+        self._build_providers()
+        self._build_add()
+        self._build_display()
+        self._build_tray()
+        self._build_data()
+        self._build_about()
+        self.show("providers")
         self._position()
+
+    # ----- layout helpers
+    def _page(self, key: str, title: str, subtitle: str = "") -> tk.Frame:
+        f = tk.Frame(self.content, bg=THEME["bg"])
+        head = tk.Frame(f, bg=THEME["bg"])
+        head.pack(fill="x", pady=(0, 10))
+        lbl(head, title, THEME["fg"], 13, True).pack(side="left")
+        f.head = head  # type: ignore[attr-defined]
+        if subtitle:
+            lbl(f, subtitle, THEME["muted"], 8, wraplength=640).pack(anchor="w", pady=(0, 10))
+        self.pages[key] = f
+        return f
+
+    def _form_row(self, parent, label: str, help_text: str = "") -> tk.Frame:
+        """A labelled row: label on the left, controls in the returned frame, help underneath."""
+        row = tk.Frame(parent, bg=THEME["bg"])
+        row.pack(fill="x", pady=(0, 10))
+        lbl(row, label, THEME["muted"], 9, width=18, anchor="w").pack(side="left", anchor="n")
+        right = tk.Frame(row, bg=THEME["bg"])
+        right.pack(side="left", fill="x", expand=True)
+        ctl = tk.Frame(right, bg=THEME["bg"])
+        ctl.pack(fill="x")
+        if help_text:
+            lbl(right, help_text, THEME["muted"], 8, wraplength=520).pack(anchor="w", pady=(2, 0))
+        return ctl
+
+    def show(self, key: str) -> None:
+        if key == self.page:
+            return
+        for k, f in self.pages.items():
+            f.pack_forget()
+        self.pages[key].pack(fill="both", expand=True)
+        for k, item in self.nav_items.items():
+            on = k == key
+            item.configure(bg=THEME["button"] if on else THEME["panel"], fg=THEME["fg"] if on else THEME["muted"],
+                           font=(FONT, fsize(10), "bold" if on else "normal"))
+        self.page = key
+        if key == "add":
+            self._refresh_picker()
+            self.top.after(50, self.pick_search.focus_set)
 
     def _position(self) -> None:
         top, widget = self.top, self.w
         top.update_idletasks()
-        wx, wy = widget.root.winfo_x(), widget.root.winfo_y()
-        tw, th = top.winfo_reqwidth(), top.winfo_reqheight()
         sw, sh = top.winfo_screenwidth(), top.winfo_screenheight()
+        geo = str(self.cfg.get("settings_geometry") or "")
+        try:
+            size, _, _ = geo.partition("+")
+            tw, th = (int(v) for v in size.split("x"))
+        except ValueError:
+            tw, th = 960, 680
+        tw, th = min(max(760, tw), sw - 40), min(max(480, th), sh - 80)
+        wx, wy = widget.root.winfo_x(), widget.root.winfo_y()
         x = wx - tw - 12 if wx - tw - 12 > 0 else min(wx + widget.width + 12, sw - tw)
-        top.geometry(f"+{max(0, x)}+{max(0, min(wy, sh - th - 60))}")
+        top.geometry(f"{tw}x{th}+{max(0, x)}+{max(0, min(wy, sh - th - 60))}")
         top.focus_force()
 
     def alive(self) -> bool:
@@ -342,18 +397,133 @@ class SettingsDialog:
             return False
 
     def close(self) -> None:
-        if self.picker is not None and self.picker.winfo_exists():
-            self.picker.destroy()
         if self.alive():
+            try:  # remember the size for next time (written with the next config save)
+                self.w.cfg["settings_geometry"] = f"{self.top.winfo_width()}x{self.top.winfo_height()}"
+            except tk.TclError:
+                pass
             self.top.destroy()
         import gc
         gc.collect()  # free the dialog's Tk variables here, on the UI thread, not later on a fetch thread
 
-    def _num(self, parent, label, value, col):
-        lbl(parent, label, THEME["muted"]).grid(row=0, column=col * 2, sticky="w", padx=(0, 4))
-        e = entry(parent, value, 5)
-        e.grid(row=0, column=col * 2 + 1, sticky="w", padx=(0, 14))
+    def _num(self, parent, value, width=6):
+        e = entry(parent, value, width)
+        e.pack(side="left")
         return e
+
+    # ----- pages
+    def _build_providers(self) -> None:
+        f = self._page("providers", "My providers")
+        button(f.head, "+ Add providers", lambda: self.show("add"), small=True).pack(side="right")
+        button(f.head, "Collapse all", lambda: self._expand_all(False), subtle=True, small=True).pack(side="right")
+        button(f.head, "Expand all", lambda: self._expand_all(True), subtle=True, small=True).pack(side="right")
+        self.row_filter = search_entry(f.head, self._filter_rows, "Filter…", 18)
+        self.row_filter.pack(side="right", padx=(0, 8))
+        self.filter_note = lbl(f.head, "", THEME["muted"], 8)
+        self.filter_note.pack(side="right", padx=(0, 6))
+        lbl(f, "Grouped by vendor. Click a provider to open its settings; changes apply when you Save.",
+            THEME["muted"], 8).pack(anchor="w", pady=(0, 8))
+        self.scroll = ScrollFrame(f, fill=True)
+        self.scroll.pack(fill="both", expand=True)
+        self.scroll.canvas.bind("<Configure>", lambda _e: self._reflow(), add="+")
+        self.prov_box = self.scroll.inner
+        self.empty_note = lbl(self.prov_box, "No providers yet. Use “+ Add providers” to pick some.", THEME["muted"], 9)
+        for pc in self.cfg.get("providers", []):
+            if pc.get("type") in PROVIDERS:
+                self._provider_row(pc)
+        self._update_counts()
+
+    def _build_add(self) -> None:
+        f = self._page("add", "Add providers")
+        self.pick_search = search_entry(f.head, self._on_pick_search, "Search name, vendor, plan…", 30)
+        self.pick_search.pack(side="right")
+        self.pick_search.bind("<Return>", lambda _e: self._pick_enter())
+        chips = tk.Frame(f, bg=THEME["bg"])
+        chips.pack(fill="x", pady=(0, 8))
+        self.kind_chips: dict[str, tk.Label] = {}
+        for key, title in KIND_FILTERS:
+            c = tk.Label(chips, text=title, padx=10, pady=3, cursor="hand2", font=(FONT, fsize(9)))
+            c.pack(side="left", padx=(0, 6))
+            c.bind("<Button-1>", lambda _e, k=key: self._set_kind(k))
+            self.kind_chips[key] = c
+        self._paint_chips()
+        lbl(chips, "Grouped by vendor. Changes apply when you Save.", THEME["muted"], 8).pack(side="right")
+        self.pick_scroll = ScrollFrame(f, fill=True)
+        self.pick_scroll.pack(fill="both", expand=True)
+        links = tk.Frame(f, bg=THEME["bg"])
+        links.pack(fill="x", pady=(8, 0))
+        button(links, "Custom provider how-to", lambda: info_dialog(self.top, "Custom providers", CUSTOM_HELP),
+               subtle=True).pack(side="left")
+        button(links, "Browser session how-to", lambda: info_dialog(self.top, "Browser sessions", COOKIE_HELP),
+               subtle=True).pack(side="left", padx=(8, 0))
+        button(links, "Request / contribute a provider",
+               lambda: webbrowser.open("https://github.com/chrisdelrey/ai_subusage/blob/main/CONTRIBUTING.md"),
+               subtle=True).pack(side="left", padx=(8, 0))
+
+    def _build_display(self) -> None:
+        f = self._page("display", "Display", "How the widget looks. The thresholds also color the tray icon.")
+        r = self._form_row(f, "Colors", "Bars turn amber, then red, at these percentages.")
+        lbl(r, "Amber at", THEME["muted"]).pack(side="left", padx=(0, 4))
+        self.v_warn = self._num(r, self.cfg.get("warn_pct", 70), 5)
+        lbl(r, "%     Red at", THEME["muted"]).pack(side="left", padx=(0, 4))
+        self.v_crit = self._num(r, self.cfg.get("crit_pct", 90), 5)
+        lbl(r, "%", THEME["muted"]).pack(side="left")
+        r = self._form_row(f, "Size", "Width in pixels (220–700) and window opacity (30–100%).")
+        lbl(r, "Width", THEME["muted"]).pack(side="left", padx=(0, 4))
+        self.v_width = self._num(r, self.cfg.get("width", 300), 5)
+        lbl(r, "px     Opacity", THEME["muted"]).pack(side="left", padx=(0, 4))
+        self.v_opacity = self._num(r, int(float(self.cfg.get("opacity", 0.95)) * 100), 5)
+        lbl(r, "%", THEME["muted"]).pack(side="left")
+        r = self._form_row(f, "View", "Full shows every limit; Condensed one line per limit; Compact one line per provider.")
+        self.v_view = choice(r, VIEWS, view_of(self.cfg))
+        r = self._form_row(f, "Sort")
+        self.v_sort = choice(r, SORTS, self.cfg.get("sort", "manual"))
+        r = self._form_row(f, "Window")
+        self.v_top = toggle(r, "Always on top", self.cfg.get("always_on_top", True))
+        r = self._form_row(f, "Providers")
+        self.v_hide = toggle(r, "Hide providers with no login", self.cfg.get("hide_unconfigured", True))
+        r = self._form_row(f, "Warnings")
+        self.v_proj = toggle(r, "Warn when a limit will run out before it resets", self.cfg.get("projections", True))
+        r = self._form_row(f, "Expired logins", "e.g. Hermes when you haven't used it lately; it comes back once you do.")
+        self.v_expired = choice(r, EXPIRED, self.cfg.get("expired_display", "hide"))
+
+    def _build_tray(self) -> None:
+        from . import tray
+        from .core import startup_enabled
+        f = self._page("tray", "Tray & startup")
+        self.tray_ok = tray.available()
+        icon = "Menu bar icon" if IS_MAC else "Tray icon"
+        if self.tray_ok:
+            r = self._form_row(f, icon, "Click the icon for its menu." if IS_MAC else
+                               "Left-click the icon to show/hide the widget; right-click for its menu.")
+            self.v_tray = choice(r, TRAY_MODES, self.cfg.get("tray", "both"))
+        else:
+            r = self._form_row(f, icon, tray.unavailable_reason())
+            self.v_tray = tk.StringVar(value=self.cfg.get("tray", "off"))
+            lbl(r, "Not available here", THEME["warn"]).pack(side="left")
+        r = self._form_row(f, "Background mode", "Starts at login and lives in the tray: the widget starts hidden. "
+                           "Show/hide, pause or quit from the icon." + ("" if self.tray_ok else " Needs a tray icon."))
+        self.v_background = toggle(r, "Run in background", self.cfg.get("background", False))
+        self._startup_was = startup_enabled()
+        r = self._form_row(f, "Start at login", "Background mode turns this on for you.")
+        self.v_startup = toggle(r, "Start SubUsage when I log in", self._startup_was)
+        r = self._form_row(f, "Command line", "Control the running widget from a terminal or a shortcut.")
+        lbl(r, "python3 -m subusage --show | --hide | --pause | --resume | --quit", THEME["fg"], 8).pack(side="left")
+
+    def _build_data(self) -> None:
+        from .core import log_path
+        f = self._page("data", "History & data", "Everything stays on this computer.")
+        r = self._form_row(f, "Usage history", "Used for the tooltip charts, History window and time-to-limit estimates.")
+        self.v_hist = toggle(r, "Keep 30 days of usage history", self.cfg.get("history", True))
+        button(r, "Clear history", self._clear_history, subtle=True, small=True).pack(side="left")
+        r = self._form_row(f, "Config file", str(config_path()) + "  (holds your keys and sessions: keep it private)")
+        button(r, "Open", lambda: open_path(config_path()), small=True).pack(side="left")
+        r = self._form_row(f, "Log file", str(log_path()))
+        button(r, "Open", lambda: open_path(log_path()), small=True).pack(side="left")
+
+    def _build_about(self) -> None:
+        f = self._page("about", "About & updates")
+        self._about(f)
 
     def _bg(self, fn, done):
         bg(fn, lambda r: self.alive() and done(r), self.top.after)
@@ -367,7 +537,6 @@ class SettingsDialog:
     # ----- about & updates
     def _about(self, outer) -> None:
         from . import update
-        lbl(outer, "ABOUT & UPDATES", THEME["muted"], 8, True).pack(anchor="w", pady=(14, 6))
         box = tk.Frame(outer, bg=THEME["panel"], padx=10, pady=8)
         box.pack(fill="x")
         top = tk.Frame(box, bg=THEME["panel"])
@@ -430,14 +599,6 @@ class SettingsDialog:
                                         update.notes_between(t, "0", __version__).split("\n## ")[0]
                                         if isinstance(t, str) else ""))
 
-    def show_about(self) -> None:
-        self.top.lift()
-        info = self.w.update_info
-        if info is None or time.time() - info.checked_at > 3600:
-            self._check_update()
-        else:
-            self._show_update_state()
-
     def _apply_update(self) -> None:
         from . import update
         info = self.w.update_info
@@ -461,48 +622,165 @@ class SettingsDialog:
             self.top.after(900, restart)
         self._bg(lambda: update.apply(info), done)
 
-    # ----- provider rows
-    def _provider_row(self, pc: dict[str, Any]) -> None:
+    # ----- provider rows (grouped by vendor, collapsible)
+    def _group(self, vendor: str) -> dict[str, Any]:
+        g = self.groups.get(vendor)
+        if g is None:
+            frame = tk.Frame(self.prov_box, bg=THEME["bg"])
+            frame.pack(fill="x", pady=(0, 6))
+            head = tk.Frame(frame, bg=THEME["bg"])
+            head.pack(fill="x", pady=(4, 4))
+            lbl(head, vendor.upper(), THEME["muted"], 8, True).pack(side="left")
+            count = lbl(head, "", THEME["muted"], 8)
+            count.pack(side="left", padx=(6, 0))
+            g = self.groups[vendor] = {"frame": frame, "count": count, "rows": []}
+        return g
+
+    def _live_status(self, row) -> tuple[str, str]:
+        """One-line status from the running widget's provider with the same type and name."""
+        cls, pc = row["cls"], row["cfg"]
+        if not pc.get("enabled", True):
+            return "disabled", THEME["muted"]
+        p = next((p for p in getattr(self.w, "providers", []) if p.type == cls.type
+                  and p.name == (pc.get("name") or cls.default_name)), None)
+        if p is None:
+            return "not saved yet", THEME["muted"]
+        snap = p.snapshot
+        if getattr(p, "parked", False):
+            return "login expired", THEME["warn"]
+        if snap.error:
+            return "⚠ " + snap.error[:70] + ("…" if len(snap.error) > 70 else ""), THEME["err"]
+        wins = [w for w in snap.windows if w.used_pct is not None]
+        if wins:
+            top = max(wins, key=lambda w: w.used_pct)
+            return f"{top.label} {top.used_pct:.0f}%", THEME["ok"] if top.used_pct < 70 else THEME["warn"]
+        if snap.notes:
+            return snap.notes[0][:60], THEME["fg"]
+        return "not checked yet", THEME["muted"]
+
+    def _provider_row(self, pc: dict[str, Any], expanded: bool = False) -> dict[str, Any]:
         cls: type[Provider] = PROVIDERS[pc["type"]]
         P = THEME["panel"]
-        f = tk.Frame(self.prov_box, bg=P, padx=10, pady=8)
-        f.pack(fill="x", pady=(0, 8))
-        row: dict[str, Any] = {"cfg": pc, "cls": cls, "frame": f, "inputs": {}}
+        vendor = vendor_of(cls)
+        g = self._group(vendor)
+        f = tk.Frame(g["frame"], bg=P, padx=10, pady=6)
+        f.pack(fill="x", pady=(0, 4))
+        row: dict[str, Any] = {"cfg": pc, "cls": cls, "frame": f, "inputs": {}, "vendor": vendor, "built": False}
 
-        head = tk.Frame(f, bg=P)
+        head = tk.Frame(f, bg=P, cursor="hand2")
         head.pack(fill="x")
+        chev = lbl(head, "▸", THEME["muted"], 9, cursor="hand2")
+        chev.pack(side="left", padx=(0, 6))
         dot = tk.Canvas(head, width=8, height=8, bg=P, highlightthickness=0)
         dot.create_oval(0, 0, 8, 8, fill=cls.accent, width=0)
         dot.pack(side="left", padx=(0, 6))
         row["enabled"] = toggle(head, "", pc.get("enabled", True), bg=P)
-        row["name"] = entry(head, pc.get("name") or cls.default_name, 16)
-        row["name"].pack(side="left")
-        lbl(head, f"{cls.vendor} · {cls.plans}" if cls.vendor else cls.plans, THEME["muted"], 8).pack(side="left", padx=8)
+        title = lbl(head, pc.get("name") or cls.default_name, THEME["fg"], 10, True, cursor="hand2")
+        title.pack(side="left")
+        tag = KIND_TAG.get(cls.auth, "")
+        lbl(head, f"  {tag}", THEME["primary_hover"] if cls.auth == "api" else THEME["muted"], 8).pack(side="left")
         button(head, "Remove", lambda: self._remove(row), subtle=True, small=True).pack(side="right")
-        if getattr(cls, "key_url", ""):
-            button(head, "Get key ↗", lambda u=cls.key_url: webbrowser.open(u), subtle=True, small=True).pack(side="right")
-        row["poll"] = entry(head, pc.get("poll_seconds", cls.default_poll), 5)
-        lbl(head, "s", THEME["muted"]).pack(side="right")
-        row["poll"].pack(side="right")
-        lbl(head, "every ", THEME["muted"]).pack(side="right")
-        if cls.setup:
-            lbl(f, cls.setup, THEME["muted"], 8, wraplength=600).pack(anchor="w", pady=(4, 0))
+        text, color = self._live_status(row)
+        row["live"] = lbl(head, text, color, 8)
+        row["live"].pack(side="right", padx=(0, 10))
+        row["chev"], row["title"] = chev, title
+        for w in (head, chev, title):
+            w.bind("<Button-1>", lambda _e: self._toggle_row(row))
 
+        row["body"] = tk.Frame(f, bg=P)
+        g["rows"].append(row)
+        self.rows.append(row)
+        if expanded:
+            self._toggle_row(row, True)
+        self._update_counts()
+        return row
+
+    def _build_body(self, row) -> None:
+        """Fields are built the first time a row is opened (keeps the window fast with many providers)."""
+        cls, pc, P = row["cls"], row["cfg"], THEME["panel"]
+        b = row["body"]
+        line = tk.Frame(b, bg=P)
+        line.pack(fill="x", pady=(6, 0))
+        lbl(line, "Name", THEME["muted"], width=14, anchor="w").pack(side="left")
+        row["name"] = entry(line, pc.get("name") or cls.default_name, 22)
+        row["name"].pack(side="left")
+        row["name"].bind("<KeyRelease>", lambda _e: row["title"].configure(text=row["name"].get() or cls.default_name))
+        lbl(line, "   Check every", THEME["muted"]).pack(side="left")
+        row["poll"] = entry(line, pc.get("poll_seconds", cls.default_poll), 6)
+        row["poll"].pack(side="left", padx=(4, 2))
+        lbl(line, "s", THEME["muted"]).pack(side="left")
+        if getattr(cls, "key_url", ""):
+            button(line, "Get key ↗", lambda u=cls.key_url: webbrowser.open(u), small=True).pack(side="right")
+        if cls.usage_url:
+            button(line, "Usage page ↗", lambda u=cls.usage_url: webbrowser.open(u), subtle=True,
+                   small=True).pack(side="right", padx=(0, 6))
+        lbl(b, f"{cls.vendor} · {cls.plans}" if cls.vendor else cls.plans, THEME["muted"], 8).pack(anchor="w",
+                                                                                                  pady=(6, 0))
+        if cls.setup:
+            row["setup"] = lbl(b, cls.setup, THEME["fg"], 8, wraplength=self._wrap())
+            row["setup"].pack(anchor="w", pady=(2, 0))
         for fld in cls.fields:
             self._field(row, fld)
         if pc.get("hidden"):
             self._hidden_line(row)
-
-        foot = tk.Frame(f, bg=P)
-        foot.pack(fill="x", pady=(6, 0))
+        foot = tk.Frame(b, bg=P)
+        foot.pack(fill="x", pady=(8, 2))
         button(foot, "Test", lambda: self._test(row), small=True).pack(side="left")
-        row["status"] = lbl(foot, "", THEME["muted"], 8, wraplength=520)
+        row["status"] = lbl(foot, "", THEME["muted"], 8, wraplength=self._wrap() - 80)
         row["status"].pack(side="left", padx=(8, 0))
-        self.rows.append(row)
+        row["built"] = True
+
+    def _wrap(self) -> int:
+        try:
+            return max(420, self.scroll.canvas.winfo_width() - 60)
+        except tk.TclError:
+            return 620
+
+    def _reflow(self) -> None:
+        """Re-wrap the long help texts when the window is resized."""
+        w = self._wrap()
+        for r in self.rows:
+            for key, width in (("setup", w), ("status", w - 80)):
+                if r.get(key) is not None:
+                    try:
+                        r[key].configure(wraplength=width)
+                    except tk.TclError:
+                        pass
+
+    def _toggle_row(self, row, open_: Optional[bool] = None) -> None:
+        want = (not row["body"].winfo_ismapped()) if open_ is None else open_
+        if want:
+            if not row["built"]:
+                self._build_body(row)
+            row["body"].pack(fill="x")
+            row["chev"].configure(text="▾")
+        else:
+            row["body"].pack_forget()
+            row["chev"].configure(text="▸")
+
+    def _expand_all(self, open_: bool) -> None:
+        for r in self.rows:
+            if r["frame"].winfo_ismapped() or not open_:
+                self._toggle_row(r, open_)
+
+    def _update_counts(self) -> None:
+        for vendor, g in list(self.groups.items()):
+            n = len(g["rows"])
+            if not n:
+                g["frame"].destroy()
+                del self.groups[vendor]
+                continue
+            g["count"].configure(text=f"· {n}" if n > 1 else "")
+        self.nav_items["providers"].configure(text=f"My providers ({len(self.rows)})") \
+            if hasattr(self, "nav_items") else None
+        if self.rows:
+            self.empty_note.pack_forget()
+        else:
+            self.empty_note.pack(anchor="w", pady=20)
 
     def _field(self, row, fld) -> None:
         P = THEME["panel"]
-        f = row["frame"]
+        f = row["body"]
         line = tk.Frame(f, bg=P)
         line.pack(fill="x", pady=(6, 0))
         val = row["cfg"].get(fld.key, "")
@@ -544,11 +822,11 @@ class SettingsDialog:
                 d = None
             hint = f"{hint}  Default: {d}" if d else hint
         if hint:
-            lbl(f, hint, THEME["muted"], 7, wraplength=600).pack(anchor="w", padx=(0, 0))
+            lbl(f, hint, THEME["muted"], 7, wraplength=self._wrap()).pack(anchor="w", padx=(110, 0))
 
     def _hidden_line(self, row) -> None:
         P = THEME["panel"]
-        line = tk.Frame(row["frame"], bg=P)
+        line = tk.Frame(row["body"], bg=P)
         line.pack(fill="x", pady=(6, 0))
         lbl(line, "Hidden limits", THEME["muted"], width=14, anchor="w").pack(side="left")
 
@@ -563,10 +841,14 @@ class SettingsDialog:
             chip.pack(side="left", padx=(0, 6))
 
     def _status(self, row, text, color=None):
+        if not row["built"]:
+            self._toggle_row(row, True)
         if row["status"].winfo_exists():
             row["status"].configure(text=text, fg=color or THEME["muted"])
 
     def _set(self, row, key, value: str) -> None:
+        if not row["built"]:
+            self._build_body(row)
         w = row["inputs"][key]
         if isinstance(w, tk.StringVar):
             w.set(value)
@@ -625,6 +907,8 @@ class SettingsDialog:
         pc = dict(row["cfg"])
         cls = row["cls"]
         pc["enabled"] = bool(row["enabled"].get())
+        if not row["built"]:  # never opened: nothing edited except the enabled checkbox
+            return pc
         pc["name"] = row["name"].get().strip() or cls.default_name
         try:
             pc["poll_seconds"] = max(cls.min_poll, int(float(row["poll"].get())))
@@ -696,14 +980,20 @@ class SettingsDialog:
     def _remove(self, row) -> None:
         row["frame"].destroy()
         self.rows.remove(row)
+        g = self.groups.get(row["vendor"])
+        if g and row in g["rows"]:
+            g["rows"].remove(row)
+        self._update_counts()
         self._refresh_picker()
 
     def add_provider(self, ptype: str) -> None:
         cls = PROVIDERS[ptype]
-        self._provider_row({"type": ptype, "enabled": True, "name": cls.default_name,
-                            "poll_seconds": cls.default_poll})
-        self.top.after(50, lambda: self.scroll.canvas.yview_moveto(1.0))
+        row = self._provider_row({"type": ptype, "enabled": True, "name": cls.default_name,
+                                  "poll_seconds": cls.default_poll}, expanded=True)
+        row["live"].configure(text="new: fill in and Save", fg=THEME["warn"])
         self._refresh_picker()
+        if self.page == "providers":
+            self.top.after(60, lambda: self.scroll.scroll_to(row["frame"]))
 
     def save(self) -> None:
         def num(e, default, lo, hi):
@@ -711,8 +1001,10 @@ class SettingsDialog:
                 return max(lo, min(hi, float(e.get())))
             except ValueError:
                 return default
+        from .core import log, set_startup
         cfg = self.cfg
-        cfg["providers"] = [self._row_cfg(r) for r in self.rows]
+        # Saved in the order shown: grouped by vendor, so the widget lists them the same way.
+        cfg["providers"] = [self._row_cfg(r) for g in self.groups.values() for r in g["rows"]]
         cfg["warn_pct"] = num(self.v_warn, 70, 1, 100)
         cfg["crit_pct"] = num(self.v_crit, 90, 1, 100)
         cfg["width"] = int(num(self.v_width, 300, 220, 700))
@@ -723,10 +1015,12 @@ class SettingsDialog:
         cfg["expired_display"] = self.v_expired.get()
         cfg["tray"] = self.v_tray.get()
         was_bg, cfg["background"] = bool(cfg.get("background")), bool(self.v_background.get()) and self.tray_ok
+        want_startup = bool(self.v_startup.get())
         if cfg["background"] != was_bg:
-            from .core import log, set_startup
+            want_startup = cfg["background"]  # background mode = start at login; turning it off undoes that
+        if want_startup != self._startup_was:
             try:
-                set_startup(cfg["background"])  # background mode = start at login; turning it off undoes that
+                set_startup(want_startup)
             except OSError as e:
                 log(f"start at login failed: {e}")
         cfg["projections"] = bool(self.v_proj.get())
@@ -734,70 +1028,60 @@ class SettingsDialog:
         cfg.pop("compact", None)
         cfg["check_updates"] = bool(self.v_updates.get())
         cfg["hide_unconfigured"] = bool(self.v_hide.get())
+        try:
+            cfg["settings_geometry"] = f"{self.top.winfo_width()}x{self.top.winfo_height()}"
+        except tk.TclError:
+            pass
         self.close()
         self.w.apply_config(cfg)
 
-    # ----- "Add subscription" picker
+    # ----- "Add providers" page
     def open_picker(self) -> None:
-        if self.picker is not None and self.picker.winfo_exists():
-            self.picker.lift()
-            return
-        pk = self.picker = tk.Toplevel(self.top)
-        pk.title("Add subscription")
-        pk.configure(bg=THEME["bg"])
-        pk.attributes("-topmost", True)
-        pk.resizable(False, False)
-        pk.bind("<Escape>", lambda _e: pk.destroy())
-        outer = tk.Frame(pk, bg=THEME["bg"], padx=16, pady=14)
-        outer.pack(fill="both", expand=True)
-        top_line = tk.Frame(outer, bg=THEME["bg"])
-        top_line.pack(fill="x")
-        lbl(top_line, "Add or remove subscriptions. Changes apply when you Save in Settings.", THEME["muted"],
-            8).pack(side="left")
-        self.pick_query = ""
-        self.pick_search = search_entry(top_line, self._on_pick_search, "Search providers…", 26)
-        self.pick_search.pack(side="right")
-        self.pick_search.bind("<Return>", lambda _e: self._pick_enter())
-        self.pick_scroll = ScrollFrame(outer, max_height=int(pk.winfo_screenheight() * 0.6), width=600)
-        self.pick_scroll.pack(fill="x", pady=(8, 0))
-        bar = tk.Frame(outer, bg=THEME["bg"])
-        bar.pack(fill="x", pady=(12, 0))
-        button(bar, "Custom provider how-to", lambda: info_dialog(pk, "Custom providers", CUSTOM_HELP),
-               subtle=True).pack(side="left")
-        button(bar, "Browser session how-to", lambda: info_dialog(pk, "Browser sessions", COOKIE_HELP),
-               subtle=True).pack(side="left", padx=(8, 0))
-        button(bar, "Request / contribute a provider",
-               lambda: webbrowser.open("https://github.com/chrisdelrey/ai_subusage/blob/main/CONTRIBUTING.md"),
-               subtle=True).pack(side="left", padx=(8, 0))
-        button(bar, "Done", pk.destroy, primary=True).pack(side="right")
+        self.top.lift()
+        self.show("add")
+
+    def show_about(self) -> None:
+        self.top.lift()
+        self.show("about")
+        info = self.w.update_info
+        if info is None or time.time() - info.checked_at > 3600:
+            self._check_update()
+        else:
+            self._show_update_state()
+
+    def _set_kind(self, kind: str) -> None:
+        self.pick_kind = kind
+        self._paint_chips()
         self._refresh_picker()
-        pk.update_idletasks()
-        pk.geometry(f"+{self.top.winfo_x() + 40}+{self.top.winfo_y() + 40}")
-        pk.after(50, self.pick_search.focus_set)
+
+    def _paint_chips(self) -> None:
+        for k, c in self.kind_chips.items():
+            on = k == self.pick_kind
+            c.configure(bg=THEME["primary"] if on else THEME["button"], fg=THEME["fg"])
+
+    def _pick_matches(self) -> list[type[Provider]]:
+        q = self.pick_query
+        return [c for c in PROVIDERS.values() if kind_matches(c, self.pick_kind)
+                and matches(q, c.default_name, c.vendor, c.plans, c.setup, c.type, KIND_TAG.get(c.auth, ""),
+                            " ".join(getattr(c, "old_names", ()) or ()))]
 
     def _refresh_picker(self) -> None:
-        if self.picker is None or not self.picker.winfo_exists():
+        if not hasattr(self, "pick_scroll") or self.page != "add":
             return
         box = self.pick_scroll.inner
         for c in box.winfo_children():
             c.destroy()
         added = {r["cls"].type for r in self.rows}
-        q = getattr(self, "pick_query", "")
-        groups = [("auto", "Detected from your existing logins"), ("key", "Paste an API key"),
-                  ("cookie", "Paste a browser session (usage only shown on the website)"),
-                  ("api", "API usage: pay-as-you-go spend and credit (paste the key)"), ("command", "Anything else")]
-        shown = 0
-        for auth, title in groups:
-            hits = [c for c in PROVIDERS.values() if c.auth == auth
-                    and matches(q, c.default_name, c.vendor, c.plans, c.setup, c.type, getattr(c, "old_names", ()) and
-                                " ".join(c.old_names) or "")]
-            if not hits:
-                continue
-            lbl(box, title.upper(), THEME["muted"], 8, True).pack(anchor="w", pady=(8, 4))
-            for cls in hits:
+        hits = self._pick_matches()
+        self._pick_hits = hits
+        by_vendor: dict[str, list[type[Provider]]] = {}
+        for c in hits:
+            by_vendor.setdefault(vendor_of(c), []).append(c)
+        for vendor in sorted(by_vendor, key=lambda v: (v in ("You", "Other"), v.lower())):
+            lbl(box, vendor.upper(), THEME["muted"], 8, True).pack(anchor="w", pady=(8, 4))
+            for cls in sorted(by_vendor[vendor], key=lambda c: (c.auth == "api", c.default_name.lower())):
                 self._picker_item(box, cls, cls.type in added)
-            shown += len(hits)
-        cat = [c for c in CATALOG if matches(q, *c)]
+        cat = [c for c in CATALOG if matches(self.pick_query, *c)] if self.pick_kind in ("all", "sub") else []
         if cat:
             lbl(box, "NOT BUILT IN YET: USE A CUSTOM PROVIDER OR CONTRIBUTE ONE", THEME["muted"], 8, True).pack(
                 anchor="w", pady=(12, 4))
@@ -806,11 +1090,10 @@ class SettingsDialog:
                 r.pack(fill="x", pady=1)
                 lbl(r, f"{name}", THEME["fg"], 9).pack(side="left")
                 lbl(r, f"  {vendor} · {source}", THEME["muted"], 8).pack(side="left")
-        if not shown and not cat:
-            lbl(box, f"Nothing matches “{q}”. You can still track it with a custom provider (Anything else → Custom).",
+        if not hits and not cat:
+            lbl(box, f"Nothing matches “{self.pick_query}”. You can still track it with a Custom provider.",
                 THEME["muted"], 9, wraplength=560).pack(anchor="w", pady=(12, 4))
         self.pick_scroll.canvas.yview_moveto(0)
-        self._pick_hits = [c for c in PROVIDERS.values() if matches(q, c.default_name, c.vendor, c.plans, c.setup, c.type)]
 
     def _on_pick_search(self, q: str) -> None:
         if q != self.pick_query:
@@ -826,14 +1109,22 @@ class SettingsDialog:
 
     def _filter_rows(self, q: str) -> None:
         shown = 0
-        for r in self.rows:
-            r["frame"].pack_forget()
-        for r in self.rows:
-            cls = r["cls"]
-            name = r["name"].get() if r.get("name") else cls.default_name
-            if matches(q, name, cls.default_name, cls.vendor, cls.plans, cls.type):
-                r["frame"].pack(fill="x", pady=(0, 8))
-                shown += 1
+        for g in self.groups.values():
+            g["frame"].pack_forget()
+            for r in g["rows"]:
+                r["frame"].pack_forget()
+        for g in self.groups.values():
+            vis = []
+            for r in g["rows"]:
+                cls = r["cls"]
+                name = r["name"].get() if r.get("name") else (r["cfg"].get("name") or cls.default_name)
+                if matches(q, name, cls.default_name, cls.vendor, cls.plans, cls.type, KIND_TAG.get(cls.auth, "")):
+                    vis.append(r)
+            if vis:
+                g["frame"].pack(fill="x", pady=(0, 6))
+                for r in vis:
+                    r["frame"].pack(fill="x", pady=(0, 4))
+                shown += len(vis)
         self.filter_note.configure(text=f"{shown} of {len(self.rows)}" if q else "")
         self.scroll.canvas.yview_moveto(0)
 
@@ -847,7 +1138,9 @@ class SettingsDialog:
         dot.create_oval(0, 0, 8, 8, fill=cls.accent, width=0)
         dot.pack(side="left", padx=(0, 6))
         lbl(top, cls.default_name, THEME["fg"], 10, True).pack(side="left")
-        lbl(top, f"  {cls.vendor} · {cls.plans}", THEME["muted"], 8).pack(side="left")
+        tag = KIND_TAG.get(cls.auth, "")
+        lbl(top, f"  {tag}", THEME["primary_hover"] if cls.auth == "api" else THEME["muted"], 8).pack(side="left")
+        lbl(top, f"  ·  {cls.plans}", THEME["muted"], 8).pack(side="left")
         if is_added and not cls.multi:
             def rm(t=cls.type):
                 for row in [x for x in self.rows if x["cls"].type == t]:
@@ -859,4 +1152,5 @@ class SettingsDialog:
         if getattr(cls, "key_url", ""):
             button(top, "Get key ↗", lambda u=cls.key_url: webbrowser.open(u), subtle=True,
                    small=True).pack(side="right", padx=(0, 6))
-        lbl(r, cls.setup, THEME["muted"], 8, wraplength=560).pack(anchor="w", pady=(2, 0))
+        lbl(r, cls.setup, THEME["muted"], 8, wraplength=max(420, self.pick_scroll.canvas.winfo_width() - 60)).pack(
+            anchor="w", pady=(2, 0))
